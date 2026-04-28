@@ -243,8 +243,57 @@ pub(crate) fn emit_svelte_element_node(
         let first = *action_counter;
         first..first
     };
+    // Reviewer follow-up #8: `<svelte:boundary>`'s `failed` /
+    // `pending` snippets must emit INSIDE the createElement attrs
+    // object (`failed: (e) => {…}`) so `(e)` types against
+    // svelte/elements' `'svelte:boundary'.failed` snippet-prop
+    // signature. Pre-fix the snippets walked through the regular
+    // snippet-block emit path (`void ((e: any) => {…})`) which
+    // disconnected them from the boundary's prop signature.
+    //
+    // Identify the failed/pending snippets up front so they can be
+    // (a) injected as createElement props and (b) skipped from the
+    // children walk (avoiding double-emit). Other snippet names
+    // (user-defined) walk through the regular path.
+    let boundary_snippet_props: Vec<&svn_parser::SnippetBlock> = if dom_emit
+        && matches!(s.kind, SvelteElementKind::Boundary)
+    {
+        s.children
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                svn_parser::Node::SnippetBlock(b)
+                    if b.name.as_str() == "failed" || b.name.as_str() == "pending" =>
+                {
+                    Some(b)
+                }
+                _ => None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     if dom_emit {
-        emit_svelte_element_open(buf, source, s, depth, &action_indices);
+        if matches!(s.kind, SvelteElementKind::Boundary) {
+            // Inline emit so boundary's `failed` / `pending` snippets
+            // type against the createElement's contextual prop
+            // signature.
+            let tag = format!("svelte:{}", s.kind.as_str());
+            emit_dom_element_open_with_snippet_props(
+                buf,
+                source,
+                &tag,
+                true,
+                &s.attributes,
+                depth,
+                &action_indices,
+                &boundary_snippet_props,
+                insts,
+                action_counter,
+            );
+        } else {
+            emit_svelte_element_open(buf, source, s, depth, &action_indices);
+        }
         emit_dom_directive_checks(buf, source, "", &s.attributes, inner_depth);
     }
     emit_element_bind_checks_inline(buf, source, "", &s.attributes, inner_depth);
@@ -260,15 +309,46 @@ pub(crate) fn emit_svelte_element_node(
             action_counter,
         );
     }
-    emit_children_with_let_bindings(
-        buf,
-        source,
-        &s.attributes,
-        &s.children,
-        inner_depth,
-        insts,
-        action_counter,
-    );
+    if !boundary_snippet_props.is_empty() {
+        // Boundary case: failed / pending snippets were already emitted
+        // inline as createElement props. Walk the rest of the children
+        // (any other content the user put inside `<svelte:boundary>`).
+        // Filter out the matched snippets to avoid double-emit.
+        let filtered = svn_parser::Fragment {
+            nodes: s
+                .children
+                .nodes
+                .iter()
+                .filter(|n| match n {
+                    svn_parser::Node::SnippetBlock(b) => {
+                        b.name.as_str() != "failed" && b.name.as_str() != "pending"
+                    }
+                    _ => true,
+                })
+                .cloned()
+                .collect(),
+            range: s.children.range,
+        };
+        emit_children_with_let_bindings(
+            buf,
+            source,
+            &s.attributes,
+            &filtered,
+            inner_depth,
+            insts,
+            action_counter,
+        );
+    } else {
+        emit_children_with_let_bindings(
+            buf,
+            source,
+            &s.attributes,
+            &s.children,
+            inner_depth,
+            insts,
+            action_counter,
+        );
+    }
     if dom_emit {
         emit_dom_element_close(buf, depth);
     }
@@ -295,6 +375,46 @@ pub(crate) fn emit_dom_element_open(
     attributes: &[svn_parser::Attribute],
     depth: usize,
     action_indices: &std::ops::Range<usize>,
+) {
+    emit_dom_element_open_with_snippet_props(
+        buf,
+        source,
+        tag_name,
+        tag_literal,
+        attributes,
+        depth,
+        action_indices,
+        &[],
+        &HashMap::new(),
+        &mut 0,
+    );
+}
+
+/// Variant of [`emit_dom_element_open`] that also emits a slice of
+/// `{#snippet NAME(params)}` blocks as `NAME: (params) => {…}` props
+/// inside the createElement attrs object — used for `<svelte:boundary>`'s
+/// `failed` / `pending` snippet children. Mirrors upstream svelte2tsx
+/// where `<svelte:boundary failed:(e) => {…}>` is emitted INSIDE the
+/// createElement attrs so `(e)` types against svelte/elements'
+/// `'svelte:boundary'.failed` snippet-prop signature.
+///
+/// Pre-fix the boundary's failed/pending snippets walked through the
+/// regular snippet-block emit path (`void ((e: any) => {…})`) which
+/// disconnected them from the boundary's prop signature: the user's
+/// declared `failed: Snippet<[error, reset]>` shape never reached the
+/// snippet body and `e` typed as `any`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_dom_element_open_with_snippet_props(
+    buf: &mut EmitBuffer,
+    source: &str,
+    tag_name: &str,
+    tag_literal: bool,
+    attributes: &[svn_parser::Attribute],
+    depth: usize,
+    action_indices: &std::ops::Range<usize>,
+    snippet_props: &[&svn_parser::SnippetBlock],
+    insts: &HashMap<u32, &svn_analyze::ComponentInstantiation>,
+    action_counter: &mut usize,
 ) {
     let indent = "    ".repeat(depth);
     // Build the `__svn_union(__svn_action_0, __svn_action_1, …)`
@@ -392,6 +512,28 @@ pub(crate) fn emit_dom_element_open(
                 }
             }
         }
+    }
+    // Snippet-as-prop entries (boundary's `failed` / `pending`).
+    // Emitted as `NAME: (params) => { body; return
+    // __svn_snippet_return(); },` inside the createElement attrs so
+    // `(params)` types against the element's declared snippet-prop
+    // signature.
+    for snippet in snippet_props {
+        if !any {
+            buf.push_str("\n");
+            any = true;
+        }
+        let prop_indent = "    ".repeat(depth + 1);
+        buf.push_str(&prop_indent);
+        crate::nodes::inline_component::write_snippet_arrow_prop(
+            buf,
+            source,
+            snippet,
+            depth + 1,
+            insts,
+            action_counter,
+        );
+        buf.push_str(",\n");
     }
     if any {
         let _ = writeln!(buf, "{indent}}});");

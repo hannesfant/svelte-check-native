@@ -5,21 +5,16 @@ async function $$render_e5ad478b() {
         // template type-check body (incremental)
         { svelteHTML.createElement("svelte:boundary", {
             "onerror": (e => e),
+            failed: (e) => {
+                { svelteHTML.createElement("p", {});                     (e);
+                }
+                void e;
+                return __svn_snippet_return();
+            },
         });
             {
-                const failed = undefined;
-                void failed;
-                {
-                    const __svn_C_27 = __svn_ensure_component(ComponentThatFails);
-                    new __svn_C_27({ target: __svn_any(), props: {} });
-                }
-                {
-                    void ((e: any) => {
-                        { svelteHTML.createElement("p", {});                             (e);
-                        }
-                        void e;
-                    });
-                }
+                const __svn_C_27 = __svn_ensure_component(ComponentThatFails);
+                new __svn_C_27({ target: __svn_any(), props: {} });
             }
         }
     });

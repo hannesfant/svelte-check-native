@@ -663,7 +663,7 @@ fn find_top_level_eq(s: &str) -> Option<usize> {
 /// call signature's props slot and flows each tuple element into the
 /// matching arrow parameter, so destructured snippet params pick up
 /// real types instead of implicit-any.
-fn write_snippet_arrow_prop(
+pub(crate) fn write_snippet_arrow_prop(
     buf: &mut EmitBuffer,
     source: &str,
     s: &SnippetBlock,
