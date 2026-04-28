@@ -1,0 +1,10 @@
+{
+    "emit_contains": [
+        "\"click\": HTMLBodyElementEventMap[\"click\"]",
+        "\"resize\": WindowEventMap[\"resize\"]"
+    ],
+    "emit_not_contains": [
+        "\"click\": HTMLElementEventMap[\"click\"]"
+    ],
+    "_note": "Reviewer follow-up #6: bare `on:NAME` on `<svelte:body>` / `<svelte:window>` was not mapped into `$$Events`. Pre-fix the bubbled-DOM-event collector hardcoded `HTMLElementEventMap` for all bubbles and explicitly skipped svelte:body/window. Post-fix the collector tags each captured event with a `BubbledDomEventScope` (Element / SvelteBody / SvelteWindow) and emit projects `HTMLElementEventMap` / `HTMLBodyElementEventMap` / `WindowEventMap` per source. Mirrors upstream svelte2tsx `event-handler.ts:63-72`. `<svelte:document>` stays out — upstream's `event-handler.ts` doesn't handle it either."
+}

@@ -482,17 +482,28 @@ fn emit_document_with_render_name(
         if !narrow_events || has_strict_events(doc) || summary.bubbled_dom_events.is_empty() {
             None
         } else {
+            // Dedup by NAME (not by name+scope): the same event name on
+            // both a regular DOM element and `<svelte:body>` /
+            // `<svelte:window>` would otherwise emit two keys for the
+            // same string, which fires TS2300 / TS1117 on the synth
+            // object type. First-occurrence-wins in walk order; rare
+            // double-bubble case stays observably consistent.
             let mut seen: Vec<&str> = Vec::with_capacity(summary.bubbled_dom_events.len());
             let mut body = String::new();
-            for name in &summary.bubbled_dom_events {
-                if seen.iter().any(|s| *s == name.as_str()) {
+            for ev in &summary.bubbled_dom_events {
+                if seen.iter().any(|s| *s == ev.name.as_str()) {
                     continue;
                 }
-                seen.push(name.as_str());
+                seen.push(ev.name.as_str());
                 if !body.is_empty() {
                     body.push_str(", ");
                 }
-                let _ = write!(body, "{n:?}: HTMLElementEventMap[{n:?}]", n = name.as_str());
+                let map_name = match ev.scope {
+                    svn_analyze::BubbledDomEventScope::Element => "HTMLElementEventMap",
+                    svn_analyze::BubbledDomEventScope::SvelteBody => "HTMLBodyElementEventMap",
+                    svn_analyze::BubbledDomEventScope::SvelteWindow => "WindowEventMap",
+                };
+                let _ = write!(body, "{n:?}: {map_name}[{n:?}]", n = ev.name.as_str());
             }
             Some(format!("{{ {body} }}"))
         };

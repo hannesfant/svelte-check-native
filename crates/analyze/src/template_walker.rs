@@ -123,30 +123,57 @@ pub struct TemplateSummary {
     /// module-scope locals only.
     pub slot_defs: Vec<SlotDef>,
     /// Bare `on:NAME` directives (no `={…}` value) seen on real DOM
-    /// elements (`Element` kind only). At runtime these forward the
-    /// native DOM event up to a parent listener; at type-check time
-    /// the consumer's `<Child on:NAME={cb}>` should see the DOM
-    /// event type (`MouseEvent`, `KeyboardEvent`, …) rather than
-    /// `CustomEvent<any>`.
+    /// elements and on `<svelte:body>` / `<svelte:window>`. At runtime
+    /// these forward the native DOM event up to a parent listener; at
+    /// type-check time the consumer's `<Child on:NAME={cb}>` should
+    /// see the DOM event type (`MouseEvent`, `KeyboardEvent`, …)
+    /// rather than `CustomEvent<any>`.
     ///
     /// Emit consumes this list to project a raw DOM-event map
     /// (`{ "click": HTMLElementEventMap["click"], … }`) and
     /// intersects it with the wrapped dispatcher-detail map to form
-    /// the FINAL `$$Events` alias. Mirrors upstream svelte2tsx's
-    /// `__sveltets_2_mapElementEvent('click')` projection in
-    /// `EventHandler.bubbledEvents`.
+    /// the FINAL `$$Events` alias. The per-entry `scope` selects the
+    /// right event map (`HTMLElementEventMap` / `HTMLBodyElementEventMap`
+    /// / `WindowEventMap`) — mirrors upstream svelte2tsx's
+    /// `__sveltets_2_mapElementEvent('click')` /
+    /// `__sveltets_2_mapBodyEvent` / `__sveltets_2_mapWindowEvent`
+    /// dispatch in `event-handler.ts:63-72`.
     ///
     /// Bare `on:NAME` on a `<Component>` does NOT land here — that
     /// path goes through `has_bubbled_component_event` (different
-    /// upstream emit, different consumer effect). Bare `on:NAME` on
-    /// `<svelte:body>` / `<svelte:window>` / `<svelte:document>`
-    /// also stays out for now (different event maps;
-    /// `HTMLBodyElementEventMap` / `WindowEventMap`).
+    /// upstream emit, different consumer effect). `<svelte:document>`
+    /// is intentionally NOT mapped: upstream svelte2tsx's
+    /// `event-handler.ts` only handles Body / Window
+    /// (`DocumentEventMap` is omitted there too).
     ///
     /// Names appear in walk order with no dedup — the caller
     /// dedupes when projecting (a duplicate key in a TS object type
     /// is fine but noisy).
-    pub bubbled_dom_events: SmallVec<SmolStr, 2>,
+    pub bubbled_dom_events: SmallVec<BubbledDomEvent, 2>,
+}
+
+/// Source-element kind for a bubbled `on:NAME` directive — drives the
+/// TS event-map name in the `$$Events` projection. Mirrors upstream
+/// svelte2tsx `event-handler.ts:63-72`'s switch on the element node
+/// type (`Element` / `Body` / `Window`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BubbledDomEventScope {
+    /// Regular DOM element (`<button on:click>`) — uses
+    /// `HTMLElementEventMap`.
+    Element,
+    /// `<svelte:body on:click>` — uses `HTMLBodyElementEventMap`.
+    SvelteBody,
+    /// `<svelte:window on:resize>` — uses `WindowEventMap`.
+    SvelteWindow,
+}
+
+/// One bare `on:NAME` directive captured for the `$$Events` synth.
+#[derive(Debug, Clone)]
+pub struct BubbledDomEvent {
+    /// Event name without the `on:` prefix (e.g. `click`).
+    pub name: SmolStr,
+    /// Which event-map the projection draws from.
+    pub scope: BubbledDomEventScope,
 }
 
 /// Expression-text source for one slot attr.
@@ -555,7 +582,11 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
         );
         collect_bind_this_checks(&e.attributes, &mut self.summary);
         collect_bind_value_bindings(&e.attributes, e.name.as_str(), &mut self.summary);
-        collect_bubbled_dom_events(&e.attributes, &mut self.summary);
+        collect_bubbled_dom_events(
+            &e.attributes,
+            BubbledDomEventScope::Element,
+            &mut self.summary,
+        );
         // `<slot [name="X"] [attr=…]>`: capture for emit's `slots:`
         // literal. Walks the attrs and skips any whose expression
         // references a name in the active shadow stack.
@@ -691,6 +722,28 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
         // (#1b, deferred).
         if matches!(s.kind, SvelteElementKind::Element) {
             collect_bind_this_checks(&s.attributes, &mut self.summary);
+        }
+        // Bare `on:NAME` event-bubbling on `<svelte:body>` /
+        // `<svelte:window>`. Each emits to a different DOM event-map
+        // (`HTMLBodyElementEventMap` / `WindowEventMap`) so the
+        // collector dispatches on the SvelteElementKind. Mirrors
+        // upstream svelte2tsx `event-handler.ts:63-72` which routes
+        // these through `__sveltets_2_mapBodyEvent` /
+        // `__sveltets_2_mapWindowEvent`. `<svelte:document>` is
+        // intentionally skipped — upstream's `event-handler.ts` doesn't
+        // handle it either.
+        match s.kind {
+            SvelteElementKind::Body => collect_bubbled_dom_events(
+                &s.attributes,
+                BubbledDomEventScope::SvelteBody,
+                &mut self.summary,
+            ),
+            SvelteElementKind::Window => collect_bubbled_dom_events(
+                &s.attributes,
+                BubbledDomEventScope::SvelteWindow,
+                &mut self.summary,
+            ),
+            _ => {}
         }
     }
 
@@ -981,25 +1034,33 @@ fn collect_bind_this_checks(attrs: &[Attribute], summary: &mut TemplateSummary) 
 }
 
 /// SVELTE-4-COMPAT: collect bare `on:NAME` directives on a real DOM
-/// element (`Element` kind only). The bare form (no `={handler}`
-/// value) is event-bubble shorthand — Svelte forwards the native DOM
-/// event up to whichever ancestor listener fires for the same name.
+/// element OR `<svelte:body>` / `<svelte:window>`. The bare form (no
+/// `={handler}` value) is event-bubble shorthand — Svelte forwards
+/// the native DOM event up to whichever ancestor listener fires for
+/// the same name.
 ///
-/// Emit projects each name into `HTMLElementEventMap[NAME]` so that
-/// consumers' `<Child on:click={cb}>` see the DOM event type
+/// Emit projects each name into the event-map dictated by the
+/// element scope:
+///
+///   - DOM element → `HTMLElementEventMap[NAME]`
+///   - `<svelte:body>` → `HTMLBodyElementEventMap[NAME]`
+///   - `<svelte:window>` → `WindowEventMap[NAME]`
+///
+/// so that consumers' `<Child on:click={cb}>` see the DOM event type
 /// (`MouseEvent`, `KeyboardEvent`, …) rather than the lax
 /// `CustomEvent<any>` fallback. Mirrors upstream svelte2tsx's
-/// `__sveltets_2_mapElementEvent('NAME')` runtime-value projection
-/// (see `EventHandler.bubbledEvents` in
-/// `language-tools/packages/svelte2tsx/src/svelte2tsx/nodes/event-handler.ts`).
+/// `__sveltets_2_mapElementEvent` / `__sveltets_2_mapBodyEvent` /
+/// `__sveltets_2_mapWindowEvent` dispatch in `event-handler.ts:63-72`.
 ///
-/// Out of scope here: `<svelte:body>` / `<svelte:window>` /
-/// `<svelte:document>` use their own event maps
-/// (`HTMLBodyElementEventMap`, `WindowEventMap`,
-/// `DocumentEventMap`); those callsites need a different projection
-/// and are deferred. Component-bubbled events (`<Child on:foo>` no
-/// value) are handled via `TemplateSummary.has_bubbled_component_event`.
-fn collect_bubbled_dom_events(attrs: &[Attribute], summary: &mut TemplateSummary) {
+/// `<svelte:document>` is intentionally NOT routed here — upstream's
+/// `event-handler.ts` doesn't handle it either. Component-bubbled
+/// events (`<Child on:foo>` no value) are handled via
+/// `TemplateSummary.has_bubbled_component_event`.
+fn collect_bubbled_dom_events(
+    attrs: &[Attribute],
+    scope: BubbledDomEventScope,
+    summary: &mut TemplateSummary,
+) {
     for attr in attrs {
         let Attribute::Directive(d) = attr else {
             continue;
@@ -1010,7 +1071,10 @@ fn collect_bubbled_dom_events(attrs: &[Attribute], summary: &mut TemplateSummary
         if d.value.is_some() {
             continue;
         }
-        summary.bubbled_dom_events.push(d.name.clone());
+        summary.bubbled_dom_events.push(BubbledDomEvent {
+            name: d.name.clone(),
+            scope,
+        });
     }
 }
 
