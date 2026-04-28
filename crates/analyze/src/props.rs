@@ -613,10 +613,24 @@ pub fn find_dispatcher_local_names(program: &oxc_ast::ast::Program<'_>) -> Vec<S
 }
 
 /// Collect the set of locals that resolve to svelte's
-/// `createEventDispatcher`. Includes the un-aliased name plus
-/// every `import { createEventDispatcher as <local> }` form.
-/// Shared by typed (`createEventDispatcher<T>()`) and untyped
-/// (`createEventDispatcher()`) detection paths.
+/// `createEventDispatcher`. Limited to imports whose source is
+/// exactly `'svelte'` — covers the un-aliased
+/// `import { createEventDispatcher } from 'svelte'`, the aliased
+/// `import { createEventDispatcher as <local> } from 'svelte'`,
+/// and the namespace `import * as <ns> from 'svelte'` form
+/// (consumers call `ns.createEventDispatcher`, but our existing
+/// callsites match `Identifier(callee)` and don't traverse member
+/// expressions, so namespace imports are out of scope today).
+///
+/// Reviewer follow-up #4: pre-fix this also unconditionally
+/// inserted the bare name on a "Svelte tooling injects it"
+/// rationale that no fixture or upstream sample actually exercises.
+/// Mirrors upstream `ComponentEvents.ts:386-389` exactly: only
+/// imports from `'svelte'` count. Without this gate, a local
+/// function (or non-Svelte import) named `createEventDispatcher`
+/// would force dispatcher detection, event surface synthesis, and
+/// the iso default-export shape on a value that has no actual
+/// Svelte event semantics.
 fn collect_ctor_locals(program: &oxc_ast::ast::Program<'_>) -> std::collections::HashSet<String> {
     use std::collections::HashSet;
     let mut ctor_locals: HashSet<String> = HashSet::new();
@@ -624,6 +638,9 @@ fn collect_ctor_locals(program: &oxc_ast::ast::Program<'_>) -> std::collections:
         let Statement::ImportDeclaration(decl) = stmt else {
             continue;
         };
+        if decl.source.value.as_str() != "svelte" {
+            continue;
+        }
         let Some(specifiers) = &decl.specifiers else {
             continue;
         };
@@ -644,10 +661,6 @@ fn collect_ctor_locals(program: &oxc_ast::ast::Program<'_>) -> std::collections:
             }
         }
     }
-    // Always include the un-aliased name, even if no import
-    // statement is present (Svelte tooling injects it in some
-    // contexts).
-    ctor_locals.insert("createEventDispatcher".to_string());
     ctor_locals
 }
 
@@ -788,13 +801,7 @@ fn scan_statement_for_dispatched_names(
         }
         Statement::BlockStatement(b) => {
             for s in &b.body {
-                scan_statement_for_dispatched_names(
-                    s,
-                    dispatcher_locals,
-                    literal_vars,
-                    seen,
-                    out,
-                );
+                scan_statement_for_dispatched_names(s, dispatcher_locals, literal_vars, seen, out);
             }
         }
         _ => {}
@@ -816,15 +823,15 @@ fn scan_expression_for_dispatched_names(
             // whose binding resolved to a string literal at module
             // top level (#3c slice).
             if let Expression::Identifier(id) = &call.callee
-                && dispatcher_locals.iter().any(|n| n.as_str() == id.name.as_str())
+                && dispatcher_locals
+                    .iter()
+                    .any(|n| n.as_str() == id.name.as_str())
                 && let Some(first) = call.arguments.first()
                 && let Some(first_expr) = first.as_expression()
             {
                 let resolved = match first_expr {
                     Expression::StringLiteral(s) => Some(s.value.to_string()),
-                    Expression::Identifier(id) => {
-                        literal_vars.get(id.name.as_str()).cloned()
-                    }
+                    Expression::Identifier(id) => literal_vars.get(id.name.as_str()).cloned(),
                     _ => None,
                 };
                 if let Some(name) = resolved
@@ -856,13 +863,7 @@ fn scan_expression_for_dispatched_names(
         }
         Expression::ArrowFunctionExpression(arrow) => {
             for s in &arrow.body.statements {
-                scan_statement_for_dispatched_names(
-                    s,
-                    dispatcher_locals,
-                    literal_vars,
-                    seen,
-                    out,
-                );
+                scan_statement_for_dispatched_names(s, dispatcher_locals, literal_vars, seen, out);
             }
         }
         Expression::FunctionExpression(fe) => {
