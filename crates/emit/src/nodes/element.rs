@@ -172,6 +172,29 @@ pub(crate) fn emit_svelte_element_node(
                 _ => None,
             })
             .collect();
+        // Reviewer follow-up #5: `let:` directives on
+        // `<svelte:component>` / `<svelte:self>` consume the synthetic
+        // component's default slot — same shape as a regular
+        // `<Comp let:foo>`. Pre-fix this path hardcoded `false` for
+        // let-handling so the destructure was silently dropped:
+        // user-declared `let:foo` names became undefined references
+        // inside children (or read as module-scope, whichever
+        // happened to lex). Mirror upstream `InlineComponent.ts:166`
+        // by routing through the same `collect_let_destructures` +
+        // `emit_let_slot_destructure` pipeline regular `<Comp>` uses.
+        //
+        // Slot-attr case (`<svelte:component slot="X" let:foo>`) is
+        // distinct — the `let:` then targets the PARENT's
+        // `$$slot_def["X"]` and gets handled at the parent's child
+        // walk via `try_emit_slot_let_consumer_open`. Skip the local
+        // destructure here so we don't double-emit.
+        let has_slot_attr = svn_analyze::literal_attr_value(&s.attributes, "slot").is_some();
+        let let_destructures = if has_slot_attr {
+            Vec::new()
+        } else {
+            crate::nodes::let_directive::collect_let_destructures(source, &s.attributes)
+        };
+        let has_let_bindings = !let_destructures.is_empty();
         crate::nodes::inline_component::emit_component_call(
             buf,
             source,
@@ -180,14 +203,34 @@ pub(crate) fn emit_svelte_element_node(
             &snippet_children,
             insts,
             action_counter,
-            false, // svelte:self/component don't currently use let:
+            has_let_bindings,
         );
+        let child_depth = depth + 1;
+        let final_child_depth = if has_let_bindings {
+            let inner_open_indent = "    ".repeat(child_depth);
+            let _ = writeln!(buf, "{inner_open_indent}{{");
+            let dest_depth = child_depth + 1;
+            crate::nodes::let_directive::emit_let_slot_destructure(
+                buf,
+                inst,
+                &let_destructures,
+                "default",
+                dest_depth,
+            );
+            dest_depth
+        } else {
+            child_depth
+        };
         // Walk non-snippet children inside the open block.
         for child in &s.children.nodes {
             if matches!(child, svn_parser::Node::SnippetBlock(_)) {
                 continue;
             }
-            crate::emit_template_node(buf, source, child, depth + 1, insts, action_counter);
+            crate::emit_template_node(buf, source, child, final_child_depth, insts, action_counter);
+        }
+        if has_let_bindings {
+            let inner_close_indent = "    ".repeat(child_depth);
+            let _ = writeln!(buf, "{inner_close_indent}}}");
         }
         crate::nodes::inline_component::emit_component_call_close(buf, depth);
         return;
