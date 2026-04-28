@@ -541,39 +541,91 @@ fn is_props_call_like(expr: &Expression<'_>) -> bool {
 
 /// SVELTE-4-COMPAT — typed-events narrowing source.
 ///
-/// Find the first top-level `createEventDispatcher<T>()` call in
-/// `program` and return the source slice of `T`. The caller splices it
-/// into a synthesised `type $$Events = <T>;` so Item 3's existing
-/// intersection narrows child event handlers.
+/// Find every top-level `createEventDispatcher<T>()` call in `program`
+/// and return the source slices of each `T` in declaration order.
+/// Caller intersects them into a synthesised `type $$Events =
+/// <T1> & <T2> & …;` so multi-dispatcher components mirror upstream
+/// `ComponentEvents.toDefString()`'s `...__sveltets_2_toEventTypings<T>()`
+/// spread shape.
 ///
 /// Resolves aliased imports (`import { createEventDispatcher as d }`)
-/// so `d<T>()` calls also match. Returns the FIRST typed dispatcher's
-/// type arg. Multiple dispatchers per file aren't unioned — `$$Events`
-/// has one declaration slot and the common pattern is one dispatcher
-/// per component; for multi-dispatcher cases the user can declare
-/// `interface $$Events` explicitly.
-pub fn find_dispatcher_event_type_source(
+/// so `d<T>()` calls also match. Untyped `createEventDispatcher()`
+/// calls are silently skipped here — caller picks them up via
+/// `find_dispatcher_local_names` + `find_dispatched_event_names`.
+///
+/// Reviewer follow-up #3: pre-fix this returned only the FIRST
+/// typed dispatcher's `<T>` and the caller's `or_else` chain
+/// suppressed untyped dispatched-name synthesis whenever any typed
+/// dispatcher existed — the multi-dispatcher and mixed-typed-untyped
+/// cases lost their event signatures entirely.
+pub fn find_dispatcher_event_type_sources(
     program: &oxc_ast::ast::Program<'_>,
     source: &str,
-) -> Option<String> {
+) -> Vec<String> {
     let ctor_locals = collect_ctor_locals(program);
+    let mut out = Vec::new();
     for stmt in &program.body {
-        let maybe_slice = match stmt {
-            Statement::VariableDeclaration(decl) => decl
-                .declarations
-                .iter()
-                .filter_map(|d| d.init.as_ref())
-                .find_map(|e| dispatcher_type_arg_slice(e, source, &ctor_locals)),
-            Statement::ExpressionStatement(expr_stmt) => {
-                dispatcher_type_arg_slice(&expr_stmt.expression, source, &ctor_locals)
+        match stmt {
+            Statement::VariableDeclaration(decl) => {
+                for d in &decl.declarations {
+                    if let Some(init) = &d.init
+                        && let Some(slice) = dispatcher_type_arg_slice(init, source, &ctor_locals)
+                    {
+                        out.push(slice);
+                    }
+                }
             }
-            _ => None,
-        };
-        if let Some(slice) = maybe_slice {
-            return Some(slice);
+            Statement::ExpressionStatement(expr_stmt) => {
+                if let Some(slice) =
+                    dispatcher_type_arg_slice(&expr_stmt.expression, source, &ctor_locals)
+                {
+                    out.push(slice);
+                }
+            }
+            _ => {}
         }
     }
-    None
+    out
+}
+
+/// Find the typed-dispatcher locals — the subset of
+/// `find_dispatcher_local_names` whose `createEventDispatcher`
+/// call was given an explicit `<T>` type argument.
+///
+/// Used by emit to compute the UNTYPED-only dispatcher locals: the
+/// difference (`all_locals \ typed_locals`) is then scanned with
+/// `find_dispatched_event_names` to pull out untyped-dispatched
+/// names without double-counting names already covered by typed
+/// dispatcher type args.
+pub fn find_typed_dispatcher_local_names(program: &oxc_ast::ast::Program<'_>) -> Vec<String> {
+    let ctor_locals = collect_ctor_locals(program);
+    let mut out = Vec::new();
+    for stmt in &program.body {
+        let Statement::VariableDeclaration(decl) = stmt else {
+            continue;
+        };
+        for d in &decl.declarations {
+            let Some(init) = &d.init else { continue };
+            let Expression::CallExpression(call) = init else {
+                continue;
+            };
+            let Expression::Identifier(id) = &call.callee else {
+                continue;
+            };
+            if !ctor_locals.contains(id.name.as_str()) {
+                continue;
+            }
+            // Typed only if the call carries explicit type-args.
+            if call.type_arguments.is_none() {
+                continue;
+            }
+            let BindingPattern::BindingIdentifier(bid) = &d.id else {
+                continue;
+            };
+            out.push(bid.name.to_string());
+        }
+    }
+    out
 }
 
 /// Find local names bound to a `createEventDispatcher(...)` call at

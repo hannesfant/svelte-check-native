@@ -1,0 +1,11 @@
+{
+    "errors": [
+        {
+            "file": "Parent.svelte",
+            "line": 27,
+            "column": 13,
+            "code": 2345
+        }
+    ],
+    "_note": "Reviewer follow-up #3: a component with multiple typed dispatchers AND an untyped dispatcher must merge ALL their event signatures into the synthesised `$$Events`. Pre-fix the typed path returned only the FIRST `<T>` (so `b` events were silently dropped) and `typed.or_else(...)` suppressed the untyped path entirely whenever any typed dispatcher existed (so `c`'s dispatched names also disappeared). Post-fix: `find_dispatcher_event_type_sources` returns ALL typed args, and `find_typed_dispatcher_local_names` lets the caller compute untyped-only locals. Final synth: `({a: {x: number}}) & ({b: {y: string}}) & { \"bye\": any }`. After the wrap-once at synthesis, the FINAL `$$Events` carries `a`, `b`, AND `bye` keys. The `<Child on:a={handleA} on:b={handleB} on:bye={handleBye} />` row passes cleanly (all three handlers match their detail types). The wrong-handler `<Child on:a={wrongHandlerForA} />` (declared `(e: number)`) fires TS2345 against the merged `a` detail. Mirrors upstream `ComponentEvents.toDefString()`'s `...__sveltets_2_toEventTypings<T>()` spread shape."
+}

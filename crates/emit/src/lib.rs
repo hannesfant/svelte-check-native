@@ -423,41 +423,67 @@ fn emit_document_with_render_name(
     // Returns None when the user doesn't use `createEventDispatcher<T>()`
     // or aliases the import — fall-through to the lax shim is safe in
     // both cases.
+    // Reviewer follow-up #3: merge ALL typed dispatcher type args
+    // AND untyped dispatched names into one combined detail map.
+    // Pre-fix the typed path returned only the FIRST `<T>` and
+    // `or_else` suppressed the untyped path whenever any typed
+    // dispatcher existed; multi-dispatcher and mixed-typed-untyped
+    // components silently lost event signatures.
+    //
+    // Mirrors upstream `ComponentEvents.toDefString()`:
+    //   - typed dispatchers spread their `<T>` into the detail map
+    //     (intersection in our shape)
+    //   - untyped-only dispatchers' `dispatch('name', …)` names get
+    //     `any` typing
+    //
+    // Final shape: `(T1) & (T2) & … & { untypedName: any, … }` where
+    // each Ti is a typed dispatcher's type arg slice. Duplicate
+    // names across typed Ts produce TS intersection of their
+    // value types — surfaces conflicts deliberately. Names appearing
+    // in BOTH a typed dispatcher and an untyped dispatcher fall to
+    // `any` via the intersection (matches upstream's
+    // `ComponentEvents.addEvent` "multiple definitions → any-typing"
+    // behavior).
     let synthesized_events_type: Option<String> = if !narrow_events || has_strict_events(doc) {
         None
     } else {
-        // Priority 1: typed `createEventDispatcher<T>()` — `T` is
-        // the detail map; emit wraps once at synthesis (downstream).
-        let typed = parsed_instance
+        let typed_args: Vec<String> = parsed_instance
             .as_ref()
             .zip(doc.instance_script.as_ref())
-            .and_then(|(p, s)| {
-                svn_analyze::find_dispatcher_event_type_source(&p.program, s.content)
-            });
-        // Priority 2 (#3a): untyped `createEventDispatcher()` +
-        // `dispatch('name', detail)` calls — collect the dispatched
-        // event names and synthesise a detail map of `{ name: any,
-        // … }`. The wrap-once at synthesis still applies, so the
-        // FINAL `$$Events` map is `{ name: CustomEvent<any>, … }`.
-        // Mirrors upstream `ComponentEvents` collection of
-        // `componentEventsFromEventsMap`.
-        typed.or_else(|| {
-            let p = parsed_instance.as_ref()?;
-            let dispatchers = svn_analyze::find_dispatcher_local_names(&p.program);
-            if dispatchers.is_empty() {
-                return None;
+            .map(|(p, s)| svn_analyze::find_dispatcher_event_type_sources(&p.program, s.content))
+            .unwrap_or_default();
+        let untyped_names: Vec<String> = parsed_instance
+            .as_ref()
+            .map(|p| {
+                let all_locals = svn_analyze::find_dispatcher_local_names(&p.program);
+                if all_locals.is_empty() {
+                    return Vec::new();
+                }
+                let typed_locals = svn_analyze::find_typed_dispatcher_local_names(&p.program);
+                let untyped_locals: Vec<String> = all_locals
+                    .into_iter()
+                    .filter(|n| !typed_locals.iter().any(|t| t == n))
+                    .collect();
+                if untyped_locals.is_empty() {
+                    return Vec::new();
+                }
+                svn_analyze::find_dispatched_event_names(&p.program, &untyped_locals)
+            })
+            .unwrap_or_default();
+        if typed_args.is_empty() && untyped_names.is_empty() {
+            None
+        } else {
+            let mut parts: Vec<String> = typed_args.iter().map(|t| format!("({t})")).collect();
+            if !untyped_names.is_empty() {
+                let body = untyped_names
+                    .iter()
+                    .map(|n| format!("{n:?}: any"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                parts.push(format!("{{ {body} }}"));
             }
-            let names = svn_analyze::find_dispatched_event_names(&p.program, &dispatchers);
-            if names.is_empty() {
-                return None;
-            }
-            let body = names
-                .iter()
-                .map(|n| format!("{n:?}: any"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            Some(format!("{{ {body} }}"))
-        })
+            Some(parts.join(" & "))
+        }
     };
     // Reviewer item #3c part 2: bare `<button on:click>` directives on
     // a DOM element forward the native DOM event to a parent listener.
