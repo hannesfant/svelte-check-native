@@ -742,8 +742,21 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
                         // Index — always `number`.
                         Some(ResolvedSlotExpr::Type("number".to_string()))
                     } else if let Some(items) = items_text.as_deref() {
+                        // Round-12 follow-up #1: `typeof <items>` is
+                        // only legal when `<items>` is a bare
+                        // identifier or dotted member chain. For
+                        // expressions that aren't directly typeof-able
+                        // (calls, indexing, ternaries, etc.) build
+                        // the items type via a typeof-safe stand-in:
+                        //   - call on typeof-safe callee →
+                        //     `ReturnType<typeof <callee>>`
+                        //   - anything else → `any` (element type
+                        //     becomes `any`, which is permissive but
+                        //     parses cleanly; pre-fix produced a
+                        //     parse-error like `typeof getRows()`).
+                        let items_ty = items_typeof_expr(items);
                         let element_ty = format!(
-                            "((typeof {items}) extends Iterable<infer __svn_T> ? __svn_T : never)"
+                            "({items_ty} extends Iterable<infer __svn_T> ? __svn_T : never)"
                         );
                         let projected = match b.destructure_path.as_deref() {
                             Some(path) => project_destructure_path(&element_ty, path),
@@ -772,7 +785,16 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
                 // unwrapped promise type directly (no path suffix).
                 for b in bindings {
                     let resolved = promise_text.as_deref().map(|p| {
-                        let unwrapped = format!("(Awaited<typeof {p}>)");
+                        // Round-12 follow-up #1: same typeof-safety
+                        // guard as the each-block path. For non-
+                        // typeof-able promise expressions (calls,
+                        // chains), use a typeof-safe stand-in — the
+                        // promise itself becomes `Promise<any>` in
+                        // the worst case, which Awaited unwraps to
+                        // `any`. Pre-fix `Awaited<typeof load()>`
+                        // was a parse error.
+                        let promise_ty = items_typeof_expr(p);
+                        let unwrapped = format!("(Awaited<{promise_ty}>)");
                         let projected = match b.destructure_path.as_deref() {
                             Some(path) => project_destructure_path(&unwrapped, path),
                             None => unwrapped,
@@ -1346,6 +1368,88 @@ fn collect_slot_def(
 /// root binding is shadowed by an active template-scope let/each
 /// binding — bare-identifier check alone misses member-access /
 /// optional-chain / index-access shapes.
+/// Round-12 follow-up #1: produce a typeof-safe TS type expression
+/// for an items / promise expression that may not be directly
+/// typeof-able. Recognised shapes:
+///
+/// - bare identifier `items`                   → `typeof items`
+/// - dotted member chain `obj.list.items`      → `typeof obj.list.items`
+/// - zero/single-arg call on typeof-safe callee `getRows()` /
+///   `obj.method(arg)`                         → `ReturnType<typeof <callee>>`
+/// - anything else (chained calls, indexing,
+///   ternary, optional chains, etc.)           → `any`
+///
+/// The fallback to `any` is conservative — element type via
+/// `Iterable<infer __svn_T>` then unwraps to `any`, accepting any
+/// consumer use without firing TS errors. Pre-fix native emitted
+/// raw `typeof <expr>` which fails to parse for non-typeof-able
+/// shapes (e.g. `typeof getRows()`).
+fn items_typeof_expr(expr: &str) -> String {
+    let trimmed = expr.trim();
+    if is_typeof_safe_chain(trimmed) {
+        return format!("typeof {trimmed}");
+    }
+    // Detect `<callee>(<args>)` where callee is typeof-safe.
+    if trimmed.ends_with(')')
+        && let Some(open) = find_balanced_call_open(trimmed)
+    {
+        let callee = trimmed[..open].trim();
+        if is_typeof_safe_chain(callee) {
+            return format!("ReturnType<typeof {callee}>");
+        }
+    }
+    "any".to_string()
+}
+
+/// Returns true iff `s` is a bare identifier or a dotted chain of
+/// identifiers (`a`, `a.b`, `a.b.c`, …). Whitespace and other
+/// tokens are not allowed inside the chain.
+fn is_typeof_safe_chain(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let mut at_segment_start = true;
+    for ch in s.chars() {
+        if at_segment_start {
+            if !(ch.is_ascii_alphabetic() || ch == '_' || ch == '$') {
+                return false;
+            }
+            at_segment_start = false;
+        } else if ch == '.' {
+            at_segment_start = true;
+        } else if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$') {
+            return false;
+        }
+    }
+    !at_segment_start
+}
+
+/// Find the byte offset of the OUTER opening `(` whose matching `)`
+/// is the LAST byte of `s`. Returns None if no balanced match.
+/// Used to extract `<callee>` from `<callee>(<args>)` expressions.
+fn find_balanced_call_open(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() || *bytes.last()? != b')' {
+        return None;
+    }
+    let mut depth: i32 = 0;
+    // Walk backwards; first '(' that brings depth to 0 (excluding
+    // the trailing ')') is the outer one.
+    for i in (0..bytes.len()).rev() {
+        match bytes[i] {
+            b')' => depth += 1,
+            b'(' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Round-12 follow-up #2: when a destructure leaf carries a default
 /// (`{ a = 1 }`), wrap the projected type in `Exclude<…, undefined>`.
 /// At the value level, the default kicks in only when the source's

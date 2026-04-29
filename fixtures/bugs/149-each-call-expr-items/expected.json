@@ -1,0 +1,11 @@
+{
+    "errors": [
+        {
+            "file": "Consumer.svelte",
+            "line": 16,
+            "column": 21,
+            "code": 2345
+        }
+    ],
+    "_note": "Round-12 follow-up #1: `{#each <call-expression> as ...}` — pre-fix native emitted raw `typeof getRows()` which is invalid TS (typeof requires an identifier or qualified name). The slot type then failed to parse, either crashing tsgo's whole-file check or silently degrading to `any`. Native now detects the call shape and emits `ReturnType<typeof getRows>` for typeof-safe callees (bare ident or dotted member chain). Non-typeof-safe shapes (chained calls, indexing, ternaries, etc.) fall back to `any` so the slot type stays parseable. Producer here exposes `id: number, label: string` from `{#each getRows() as { id, label }}`; Consumer's typed `takesNumber(id)` and `takesString(label)` pass; the swapped `takesString(id)` correctly fires TS2345 — pre-fix the `typeof getRows()` parse error would have collapsed both leaves to `any` and silently passed everything."
+}
