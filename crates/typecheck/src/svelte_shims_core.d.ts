@@ -388,8 +388,27 @@ type __SvnComponentEvents<C> = C extends { readonly __svn_events: infer E }
  * after the rewrite, `dispatch('name', detail)` calls type-check
  * `detail` against the original `$$Events.name` payload type.
  */
+/**
+ * Reviewer follow-up #4 (round 4): filter to keys whose declared
+ * value is `CustomEvent<…>` so non-CustomEvent declared events
+ * don't leak into the dispatcher's signature. Pre-fix the helper
+ * kept every key of `$$Events` and merely unwrapped CustomEvent —
+ * so an `interface $$Events { click: MouseEvent }` would
+ * incorrectly permit `dispatch('click', …)` on an event that's
+ * actually a native DOM event (which Svelte's runtime can't
+ * dispatch via `createEventDispatcher`).
+ *
+ * Mirrors upstream `__sveltets_2_CustomEvents` byte-for-byte
+ * (`svelte-shims.d.ts:139-141`): `KeysMatching<T, CustomEvent>`
+ * narrows to dispatchable entries; the inner conditional
+ * unwraps the detail type per entry.
+ */
+type __SvnKeysMatching<Obj, V> = {
+    [K in keyof Obj]-?: Obj[K] extends V ? K : never;
+}[keyof Obj];
+
 type __SvnCustomEvents<T> = {
-    [K in keyof T]: T[K] extends CustomEvent<infer D> ? D : T[K];
+    [K in __SvnKeysMatching<T, CustomEvent>]: T[K] extends CustomEvent ? T[K]['detail'] : T[K];
 };
 
 /**
