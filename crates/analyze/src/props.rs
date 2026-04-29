@@ -636,10 +636,13 @@ fn statement_collect_typed_dispatcher_slices(
     }
 }
 
-/// Round-10 follow-up #2: yield the body statements of a function /
-/// arrow expression. Empty slice for any other expression shape.
+/// Round-10 follow-up #2 / Round-11 follow-up #1: yield the body
+/// statements of any expression that wraps a function body —
+/// directly (Arrow/FunctionExpression), via parentheses
+/// (`(() => { … })`), or via an immediate call
+/// (IIFE: `(() => { … })()`). Empty slice for everything else.
 /// Used by the dispatcher collectors to recurse into nested function
-/// bodies attached as variable initializers.
+/// bodies attached as variable initializers or wrapped as IIFEs.
 fn statements_inside_function_expr<'a, 'b>(
     expr: &'a Expression<'b>,
 ) -> &'a [Statement<'b>] {
@@ -650,6 +653,13 @@ fn statements_inside_function_expr<'a, 'b>(
             .as_ref()
             .map(|b| b.statements.as_slice())
             .unwrap_or(&[]),
+        Expression::ParenthesizedExpression(p) => statements_inside_function_expr(&p.expression),
+        Expression::CallExpression(call) => {
+            // IIFE — peek through the callee. `((() => {…}))()`
+            // happens to nest one or more parens around the function
+            // expression; the recursion above unwraps those.
+            statements_inside_function_expr(&call.callee)
+        }
         _ => &[],
     }
 }
