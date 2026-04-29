@@ -1,0 +1,11 @@
+{
+    "errors": [
+        {
+            "file": "Parent.svelte",
+            "line": 12,
+            "column": 17,
+            "code": 2345
+        }
+    ],
+    "_note": "Reviewer follow-up #3a: pre-fix the `$$Events` detection scanned the raw source for the substrings `\"interface $$Events\"` / `\"type $$Events \"` (with trailing space). It silently MISSED `type $$Events=…` (no whitespace before `=`) and `type $$Events<T>=…` (generic), and false-fired on comments / strings containing those phrases. Post-fix `has_strict_events_ast` walks the parsed instance + module scripts via oxc, matching `TSInterfaceDeclaration`, `TSTypeAliasDeclaration`, and the `export interface` / `export type` re-exporting forms. The Child here uses `type $$Events={…}` (no whitespace) — pre-fix this would fall through to the lax event surface and the wrong-shape handler in Parent would pass silently. Post-fix the strict surface fires TS2345 at the wrong handler position."
+}

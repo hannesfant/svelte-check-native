@@ -25,7 +25,6 @@ use crate::emit_is_ts;
 use crate::emit_template_body;
 use crate::nodes::action::emit_legacy_action_attrs;
 use crate::props_emit::{synthesise_js_props_typedef_body, write_slots_field_type};
-use crate::svelte4::compat::has_strict_events;
 use svn_analyze::{TemplateSummary, scan_jsdoc_typedef_name, should_synthesise_js_props};
 
 /// Emit the `async function __svn_tpl_check() { … }` wrapper that
@@ -112,6 +111,7 @@ pub(crate) fn emit_render_body_return(
     exports_object: Option<&str>,
     props_info: &svn_analyze::PropsInfo,
     slot_defs: &[svn_analyze::SlotDef],
+    has_strict_events_decl: bool,
 ) {
     // JS overlay: always emit a return so the default-export's
     // `Awaited<ReturnType<typeof $$render>>['props']` extraction
@@ -208,7 +208,7 @@ pub(crate) fn emit_render_body_return(
     // surface. `__svn_ensure_component`'s marker branch then uses E
     // directly (no extra wrap), keeping every consumer path
     // consistent at one wrap level.
-    let events_field: String = if has_strict_events(doc) || synth_events_alias_body.is_some() {
+    let events_field: String = if has_strict_events_decl || synth_events_alias_body.is_some() {
         "$$Events".to_string()
     } else {
         // Lax shape: when no `$$Events` interface is declared, every

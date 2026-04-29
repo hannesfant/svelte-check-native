@@ -82,9 +82,7 @@ use default_export::{emit_default_export_declarations_js, emit_default_export_de
 use props_emit::{
     build_exports_object, inject_component_props_annotation, synthesise_js_props_typedef_body,
 };
-use svelte4::compat::{
-    emit_svelte4_ambients, has_strict_events, has_strict_events_attr, is_runes_mode,
-};
+use svelte4::compat::{emit_svelte4_ambients, has_strict_events_attr, is_runes_mode};
 use svn_analyze::should_synthesise_js_props;
 
 pub use util::compute_line_starts;
@@ -308,6 +306,16 @@ fn emit_document_with_render_name(
         || parsed_module
             .as_ref()
             .is_some_and(|p| svn_analyze::has_event_dispatcher_call(&p.program));
+    // Reviewer follow-up #3a: AST-based `$$Events` detection
+    // replaces the substring scan that false-fired on comments and
+    // string literals AND missed `type $$Events=…` (no trailing
+    // whitespace before `=`) / `type $$Events<T>=…` (generic).
+    // Computed once and threaded through to every gate that used to
+    // call `has_strict_events_decl`.
+    let has_strict_events_decl = svelte4::compat::has_strict_events_ast(
+        parsed_instance.as_ref(),
+        parsed_module.as_ref(),
+    );
 
     // Single analyze-time resolution of every Props decision emit
     // makes downstream — type text, type root name, destructure
@@ -416,7 +424,7 @@ fn emit_document_with_render_name(
     // `createEventDispatcher<T>()` without opting into strict events —
     // narrowing those without opt-in produced 18 legitimate-but-new
     // errors on a Svelte-4 bench in the reverted commit 3c24f18.
-    let narrow_events = has_strict_events(doc) || has_strict_events_attr(doc) || is_runes_mode(doc);
+    let narrow_events = has_strict_events_decl || has_strict_events_attr(doc) || is_runes_mode(doc);
     // If the component doesn't already declare `$$Events` but opted in
     // via one of the other two triggers, pull the dispatcher's type
     // argument as the source for a synthesised `type $$Events = T;`.
@@ -444,7 +452,7 @@ fn emit_document_with_render_name(
     // `any` via the intersection (matches upstream's
     // `ComponentEvents.addEvent` "multiple definitions → any-typing"
     // behavior).
-    let synthesized_events_type: Option<String> = if !narrow_events || has_strict_events(doc) {
+    let synthesized_events_type: Option<String> = if !narrow_events || has_strict_events_decl {
         None
     } else {
         let typed_args: Vec<String> = parsed_instance
@@ -493,7 +501,7 @@ fn emit_document_with_render_name(
     // `HTMLElementEventMap[NAME]` and intersect into the final
     // `$$Events` alias below.
     //
-    // Gated on the same `narrow_events && !has_strict_events(doc)`
+    // Gated on the same `narrow_events && !has_strict_events_decl`
     // window as the dispatcher synth: when the user already declared
     // `interface $$Events`, their declaration is authoritative and we
     // don't synthesise. When neither runes / strictEvents / interface
@@ -505,7 +513,7 @@ fn emit_document_with_render_name(
     // TS object type are unique; duplicates compile but produce noisy
     // diagnostics. Walk-order preserved for stable emit (snapshots).
     let bubbled_dom_event_map: Option<String> =
-        if !narrow_events || has_strict_events(doc) || summary.bubbled_dom_events.is_empty() {
+        if !narrow_events || has_strict_events_decl || summary.bubbled_dom_events.is_empty() {
             None
         } else {
             // Dedup by NAME (not by name+scope): the same event name on
@@ -806,10 +814,10 @@ fn emit_document_with_render_name(
         // constraint. Pre-fix this case fell back to lax `{ [evt:
         // string]: CustomEvent<any> }`, masking unknown-event typos.
         //
-        // `has_strict_events(doc)` is the interface case: handled
+        // `has_strict_events_decl` is the interface case: handled
         // separately downstream — `$$Events` resolves to the user's
         // declaration at module scope, no body-local synth needed.
-        (None, None) if narrow_events && !has_strict_events(doc) => Some("{}".to_string()),
+        (None, None) if narrow_events && !has_strict_events_decl => Some("{}".to_string()),
         (None, None) => None,
     };
     if let Some(body) = events_alias_body.as_deref() {
@@ -945,6 +953,7 @@ fn emit_document_with_render_name(
         exports_object.as_deref(),
         &props_info,
         &summary.slot_defs,
+        has_strict_events_decl,
     );
 
     buf.push_str("}\n");
@@ -1001,6 +1010,7 @@ fn emit_document_with_render_name(
             has_dispatcher_call,
             events_alias_body.is_some(),
             has_synth_events_content,
+            has_strict_events_decl,
         );
     } else {
         emit_default_export_declarations_js(&mut buf, &render_name);

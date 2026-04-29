@@ -17,7 +17,7 @@
 //! Our equivalent splits these concerns:
 //!
 //! - **Detection** of `$$Events` and the `<script strictEvents>`
-//!   opt-in lives in [`crate::svelte4::compat::has_strict_events`] and
+//!   opt-in lives in [`crate::svelte4::compat::has_strict_events_ast`] and
 //!   [`crate::svelte4::compat::has_strict_events_attr`]. The third
 //!   trigger (Svelte 5 runes mode) is detected by
 //!   [`crate::svelte4::compat::is_runes_mode`].

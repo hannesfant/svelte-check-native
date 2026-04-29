@@ -377,20 +377,47 @@ pub(crate) fn fragment_contains_slot(fragment: &svn_parser::Fragment) -> bool {
 
 /// SVELTE-4-COMPAT — v0.3 Item 3. Detect whether the component has a
 /// `$$Events` interface or type declaration in its instance or module
-/// script. When true, the default-export declaration intersects with
+/// script via an AST walk over the parsed scripts. When true, the
+/// default-export declaration intersects with
 /// `& { readonly __svn_events: $$Events }` so consumers resolve to
 /// `__svn_ensure_component`'s typed overload and get narrowed
 /// `$on("evt", handler)` signatures.
-pub(crate) fn has_strict_events(doc: &svn_parser::Document<'_>) -> bool {
-    let instance_src = doc
-        .instance_script
-        .as_ref()
-        .map(|s| s.content)
-        .unwrap_or("");
-    let module_src = doc.module_script.as_ref().map(|s| s.content).unwrap_or("");
-    let has_interface =
-        |src: &str| src.contains("interface $$Events") || src.contains("type $$Events ");
-    has_interface(instance_src) || has_interface(module_src)
+///
+/// Reviewer follow-up #3a: pre-fix this scanned the raw source for
+/// the substrings `"interface $$Events"` / `"type $$Events "`
+/// (with trailing space), which (a) false-fired on comments and
+/// string literals containing those phrases, (b) silently missed
+/// `type $$Events=…` (no whitespace before `=`) and `type
+/// $$Events<T>=…` (generic), and (c) missed
+/// `export interface $$Events { … }` in some forms. AST-based
+/// detection covers every well-formed declaration shape and stays
+/// blind to comments / strings / unrelated identifiers.
+pub(crate) fn has_strict_events_ast(
+    parsed_instance: Option<&svn_parser::ParsedScript<'_>>,
+    parsed_module: Option<&svn_parser::ParsedScript<'_>>,
+) -> bool {
+    let scan = |program: &oxc_ast::ast::Program<'_>| -> bool {
+        program.body.iter().any(statement_declares_events)
+    };
+    parsed_instance.is_some_and(|p| scan(&p.program))
+        || parsed_module.is_some_and(|p| scan(&p.program))
+}
+
+/// True when `stmt` is an `interface $$Events` or `type $$Events`
+/// declaration (including the `export interface` / `export type`
+/// re-exporting forms). Used by [`has_strict_events_ast`].
+fn statement_declares_events(stmt: &oxc_ast::ast::Statement<'_>) -> bool {
+    use oxc_ast::ast::{Declaration, Statement};
+    match stmt {
+        Statement::TSInterfaceDeclaration(d) => d.id.name.as_str() == "$$Events",
+        Statement::TSTypeAliasDeclaration(d) => d.id.name.as_str() == "$$Events",
+        Statement::ExportNamedDeclaration(e) => match &e.declaration {
+            Some(Declaration::TSInterfaceDeclaration(d)) => d.id.name.as_str() == "$$Events",
+            Some(Declaration::TSTypeAliasDeclaration(d)) => d.id.name.as_str() == "$$Events",
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 /// SVELTE-4-COMPAT: Detect the `<script strictEvents>` bare attribute

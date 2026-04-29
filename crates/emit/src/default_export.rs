@@ -23,8 +23,8 @@ use svn_parser::{Document, Fragment};
 use crate::emit_buffer::EmitBuffer;
 use crate::process_instance_script_content;
 use crate::svelte4::compat::{
-    contains_export_let, fragment_contains_slot, has_strict_events, has_strict_events_attr,
-    is_runes_mode, is_svelte4_component,
+    contains_export_let, fragment_contains_slot, has_strict_events_attr, is_runes_mode,
+    is_svelte4_component,
 };
 use crate::util::{generic_arg_names, render_class_name};
 
@@ -97,6 +97,7 @@ pub(crate) fn emit_default_export_declarations_ts(
     has_dispatcher_call: bool,
     has_synth_events_alias: bool,
     has_synth_events_content: bool,
+    has_strict_events_decl: bool,
 ) {
     // Upstream's `addComponentExport.ts:343` selects between three
     // default-export shapes. For the **non-generic, runes, no-slots,
@@ -128,7 +129,14 @@ pub(crate) fn emit_default_export_declarations_ts(
         buf.push_str("];\n");
         buf.push_str("void (0 as any as __svn_tpl_type_refs);\n");
     }
-    if should_emit_fn_component_shape(doc, fragment, split, generics, has_dispatcher_call) {
+    if should_emit_fn_component_shape(
+        doc,
+        fragment,
+        split,
+        generics,
+        has_dispatcher_call,
+        has_strict_events_decl,
+    ) {
         // Fn-shape marker gates on CONTENT, not alias-existence: a
         // runes-mode component with no dispatcher and no bubbled events
         // emits `type $$Events = {}` (the empty surface that mirrors
@@ -219,7 +227,7 @@ pub(crate) fn emit_default_export_declarations_ts(
     //       lives INSIDE the render body, so we project it back
     //       out via `Awaited<ReturnType<typeof $$render>>['events']`
     //       — same indirection used for props / exports.
-    let typed_events_intersection: String = if has_strict_events(doc) {
+    let typed_events_intersection: String = if has_strict_events_decl {
         " & { readonly __svn_events: $$Events }".to_string()
     } else if has_dispatcher_call || has_synth_events_alias {
         // `has_synth_events_alias` covers the bubbled-DOM-only path
@@ -399,6 +407,7 @@ fn should_emit_fn_component_shape(
     split: Option<&process_instance_script_content::SplitScript>,
     generics: Option<&str>,
     has_dispatcher_call: bool,
+    has_strict_events_decl: bool,
 ) -> bool {
     if generics.is_some() {
         return false;
@@ -409,7 +418,7 @@ fn should_emit_fn_component_shape(
     if fragment_contains_slot(fragment) {
         return false;
     }
-    if has_strict_events(doc) || has_strict_events_attr(doc) {
+    if has_strict_events_decl || has_strict_events_attr(doc) {
         return false;
     }
     // AST-based dispatcher presence check, computed by the caller in
