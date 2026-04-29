@@ -497,25 +497,16 @@ fn emit_document_with_render_name(
             let mut untyped_names: Vec<String> = parsed_instance
                 .as_ref()
                 .map(|p| {
-                    // Round-11 follow-up #3: scan dispatched names
-                    // through dispatcher locals whose NAME has at
-                    // least one UNTYPED binding. Pre-fix native
-                    // computed `untyped_locals` as the multiset
-                    // difference `all_locals \ typed_locals` BY NAME,
-                    // which wrongly excluded a top-level untyped
-                    // dispatcher when a nested typed dispatcher
-                    // shadowed it (same name → both entries cancel
-                    // → calls missed). The new helper keeps any
-                    // name where the untyped count exceeds zero —
-                    // mirrors upstream's per-call check
-                    // `eventDispatchers.some(d => !d.typing && d.name
-                    // === call.name)` (`ComponentEvents.ts:256`).
-                    let untyped_locals =
-                        svn_analyze::find_untyped_dispatcher_local_names(&p.program);
-                    if untyped_locals.is_empty() {
-                        return Vec::new();
-                    }
-                    svn_analyze::find_dispatched_event_names(&p.program, &untyped_locals)
+                    // Round-13 follow-up #1: source-order single-pass
+                    // tracking — `find_dispatched_event_names` now
+                    // discovers untyped-dispatcher locals INCREMENTALLY
+                    // as it walks, so forward calls
+                    // `dispatch('ready'); const dispatch = …`
+                    // don't resolve. Pre-fix the helper called
+                    // `find_untyped_dispatcher_local_names` first
+                    // (whole-program collection) and then scanned
+                    // calls — forward refs registered wrongly.
+                    svn_analyze::find_dispatched_event_names(&p.program)
                 })
                 .unwrap_or_default();
             // Round-8 follow-up #5: collapse names duplicated across
