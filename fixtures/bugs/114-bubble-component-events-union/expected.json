@@ -1,0 +1,11 @@
+{
+    "errors": [
+        {
+            "file": "Consumer.svelte",
+            "line": 22,
+            "column": 19,
+            "code": 2345
+        }
+    ],
+    "_note": "Reviewer follow-up #2 (round 4): when a wrapper bubbles the SAME event name from multiple child components, the wrapper's `$$Events` must carry the UNION of every source's declared event type. Pre-fix the dedup-by-name dropped every bubble after the first — Radio's contribution disappeared, Wrapper's `click` typed as just Button's CustomEvent, and a too-narrow consumer handler passed silently. Post-fix: group bubbled component events by name in walk order; emit `(__SvnComponentEvents<typeof Button>['click'] | __SvnComponentEvents<typeof Radio>['click'])` so the consumer's handler receives the union. The `tooNarrowHandler(e: CustomEvent<{source:'button'}>)` then fails TS2345 against the union, while `correctHandler(e: CustomEvent<{source:'button'|'radio'}>)` passes. Mirrors upstream svelte2tsx's `__sveltets_2_unionType(__sveltets_2_bubbleEventDef(...), __sveltets_2_bubbleEventDef(...))` (`event-handler.ts:55-60`)."
+}

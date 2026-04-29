@@ -573,12 +573,21 @@ fn emit_document_with_render_name(
     {
         None
     } else {
-        let mut seen: Vec<&str> = Vec::with_capacity(summary.bubbled_component_events.len());
-        let mut body = String::new();
+        // Reviewer follow-up #2 (round 4): same-name bubbled
+        // component events used to drop everything after the first
+        // — a `<Button on:click />` followed by `<Radio on:click />`
+        // discarded Radio's contribution. Upstream svelte2tsx
+        // (`event-handler.ts:55-60`) accumulates every bubble and
+        // wraps multiple sources via `__sveltets_2_unionType(...)`.
+        // At type-level we mirror with a TS union: `(A | B)`.
+        //
+        // Group by event name in walk order so the consumer's
+        // handler receives the union of every bubbled source's
+        // declared event type. Inner roots dedup by identity so a
+        // component bubbling the same event twice (rare) doesn't
+        // produce `T | T`.
+        let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
         for ev in &summary.bubbled_component_events {
-            if seen.iter().any(|s| *s == ev.event_name.as_str()) {
-                continue;
-            }
             // Skip synthetic roots — `typeof __svn_self_default` /
             // `typeof (<expr>)` aren't well-formed `typeof`
             // expressions for arbitrary user code.
@@ -592,15 +601,25 @@ fn emit_document_with_render_name(
             {
                 continue;
             }
-            seen.push(ev.event_name.as_str());
-            if !body.is_empty() {
+            let name = ev.event_name.as_str();
+            if let Some(idx) = groups.iter().position(|(n, _)| *n == name) {
+                if !groups[idx].1.iter().any(|r| *r == root) {
+                    groups[idx].1.push(root);
+                }
+            } else {
+                groups.push((name, vec![root]));
+            }
+        }
+        let mut body = String::new();
+        for (i, (name, roots)) in groups.iter().enumerate() {
+            if i > 0 {
                 body.push_str(", ");
             }
-            let _ = write!(
-                body,
-                "{n:?}: __SvnComponentEvents<typeof {root}>[{n:?}]",
-                n = ev.event_name.as_str(),
-            );
+            let union_parts: Vec<String> = roots
+                .iter()
+                .map(|r| format!("__SvnComponentEvents<typeof {r}>[{name:?}]"))
+                .collect();
+            let _ = write!(body, "{name:?}: ({})", union_parts.join(" | "));
         }
         if body.is_empty() {
             None
