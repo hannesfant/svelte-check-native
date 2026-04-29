@@ -72,11 +72,10 @@ pub struct BoundIdent {
     /// - shorthand `let:foo` → `["foo"]` (binding name == directive name).
     /// - alias `let:foo={bar}` → `["foo"]` (single bare-ident expression
     ///   aliases the slot's `foo` value to `bar`).
-    /// - destructure `let:foo={pattern}` → currently unsupported; left
-    ///   `None` so the slot-let resolver falls through to the existing
-    ///   "shadowed but unresolvable" path. Round-7 #1 will extend this
-    ///   to carry the destructure's property path (`["foo", "a"]` for
-    ///   `let:foo={{a}}`).
+    /// - destructure `let:foo={{a, b}}` → `["foo", "a"]` for `a`,
+    ///   `["foo", "b"]` for `b`. Round-8 #2 combines the directive
+    ///   name with each leaf's `destructure_path` so leaves resolve
+    ///   through the proper bracket-chain.
     pub slot_key_path: Option<Vec<SmolStr>>,
     /// Round-7 follow-up #3: for bindings declared by a destructure
     /// pattern in `{#each items as PATTERN}` or `{:then PATTERN}`,

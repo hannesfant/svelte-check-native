@@ -308,10 +308,12 @@ pub(crate) fn write_slots_field_type(
                     write_slot_attr_expr(out, source, expr);
                 }
                 svn_analyze::SlotAttr::Spread { expr } => {
-                    // Stage 3 of the SlotHandler port wires this
-                    // through. Today nothing produces Spread (the
-                    // walker skips spreads), but the shape is here
-                    // ready for it.
+                    // `<slot {...row}>` carries the spread's expression
+                    // through `write_slot_attr_expr_inner`. The Type-
+                    // form arm (round-8 #1) emits `undefined as any as
+                    // (T)` so the wrap becomes
+                    // `...(undefined as any as (T))` — syntactically
+                    // valid AND projects the right element shape.
                     out.push_str("...(");
                     write_slot_attr_expr_inner(out, source, expr);
                     out.push(')');

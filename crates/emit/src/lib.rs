@@ -1024,11 +1024,14 @@ fn emit_document_with_render_name(
     // Round-6 follow-up #1 only handled (typed + bubble); pre-round-7
     // had bubble overriding ALL dispatcher keys, including untyped
     // names. Upstream emits untyped names AFTER bubbles, so untyped
-    // wins. The duplicate-typed-name collapse (where a key shared by
-    // multiple typed dispatchers becomes `CustomEvent<any>` in
-    // upstream) is an acknowledged divergence: we'd need to enumerate
-    // type-arg keys at synth time to detect it, which our text-level
-    // type sources don't support.
+    // wins.
+    //
+    // Round-8 follow-up #5 handles the duplicate-typed-name collapse
+    // for INLINE type literals: keys appearing 2+ times across inline
+    // typed dispatchers are pushed into `untyped_names` upstream of
+    // this combine block, where the layered override resolves them as
+    // `CustomEvent<any>` (matching upstream's `addToEvents` collision
+    // override → `'name': customEvent` last in `toDefString`).
     fn wrap_typed_to_mapped(t: &str) -> String {
         format!("{{ [__svn_K in keyof ({t})]: CustomEvent<({t})[__svn_K]> }}")
     }
