@@ -533,138 +533,133 @@ fn emit_document_with_render_name(
     // otherwise emit two `"click"` keys in the projection. Keys in a
     // TS object type are unique; duplicates compile but produce noisy
     // diagnostics. Walk-order preserved for stable emit (snapshots).
-    let bubbled_dom_event_map: Option<String> =
-        if has_strict_events_decl || summary.bubbled_dom_events.is_empty() {
-            None
-        } else {
-            // Dedup by NAME (not by name+scope): the same event name on
-            // both a regular DOM element and `<svelte:body>` /
-            // `<svelte:window>` would otherwise emit two keys for the
-            // same string, which fires TS2300 / TS1117 on the synth
-            // object type.
-            //
-            // Reviewer follow-up #6 (round 4): switch first-wins to
-            // LAST-wins to match upstream's `Map.set` semantics in
-            // `event-handler.ts:18` (`bubbledEvents.set(...)` always
-            // overwrites). For mixed-scope cases like `<button
-            // on:resize />` followed by `<svelte:window on:resize />`
-            // upstream picks the WindowEventMap projection;
-            // first-wins picked HTMLElementEventMap and silently
-            // narrowed the consumer-handler arg.
-            //
-            // Walk in reverse, dedup, then reverse back to preserve
-            // walk-order for the surviving entries (cosmetic — the
-            // TS object literal is unordered, but stable emit makes
-            // snapshots clean).
-            let mut kept: Vec<&svn_analyze::BubbledDomEvent> =
-                Vec::with_capacity(summary.bubbled_dom_events.len());
-            let mut seen: Vec<&str> = Vec::with_capacity(summary.bubbled_dom_events.len());
-            for ev in summary.bubbled_dom_events.iter().rev() {
-                if seen.iter().any(|s| *s == ev.name.as_str()) {
-                    continue;
-                }
-                seen.push(ev.name.as_str());
-                kept.push(ev);
-            }
-            kept.reverse();
-            let mut body = String::new();
-            for ev in &kept {
-                if !body.is_empty() {
-                    body.push_str(", ");
-                }
-                // Reviewer follow-up #7: upstream svelte2tsx's shim
-                // (`svelte-shims.d.ts:185-190`) declares
-                // `__sveltets_2_mapBodyEvent` returning
-                // `WindowEventMap[K]` and `__sveltets_2_mapWindowEvent`
-                // returning `HTMLBodyElementEventMap[K]`. The naming
-                // is upstream-internal (not what TS itself uses) and
-                // looks swapped relative to the DOM API, but it's
-                // the source of truth for parity. Mirror the swap
-                // so consumer-side handler types match upstream
-                // byte-for-byte.
-                let map_name = match ev.scope {
-                    svn_analyze::BubbledDomEventScope::Element => "HTMLElementEventMap",
-                    svn_analyze::BubbledDomEventScope::SvelteBody => "WindowEventMap",
-                    svn_analyze::BubbledDomEventScope::SvelteWindow => "HTMLBodyElementEventMap",
-                };
-                let _ = write!(body, "{n:?}: {map_name}[{n:?}]", n = ev.name.as_str());
-            }
-            Some(format!("{{ {body} }}"))
-        };
-    // Reviewer follow-up #2: bare `<Child on:NAME />` directives
-    // re-dispatch Child's NAME event to the wrapper's consumers.
-    // Project each into the wrapper's `$$Events` surface via
-    // `__SvnComponentEvents<typeof <root>>["NAME"]` so consumers'
-    // `<Wrapper on:NAME={cb}>` see Child's declared event type.
-    // Mirrors upstream svelte2tsx's
-    // `__sveltets_2_bubbleEventDef(__sveltets_2_instanceOf(<Child>).$$events_def, '<name>')`
-    // projection in `event-handler.ts:55-60`. Pre-fix the bubble
-    // was only checked locally via `$inst.$on(...)` for
-    // child-event-name validation but never propagated.
+    // Reviewer follow-up #1 (round 5): merge DOM and component
+    // bubbles into ONE flat per-name map so cross-kind same-name
+    // collisions resolve as overwrite/union (matching upstream's
+    // single `EventHandler.bubbledEvents` map) rather than
+    // intersecting two separate fragments. Dispatchers stay
+    // separate (the dispatcher fragment is a mapped type whose
+    // keys can't be enumerated at synthesis time — same-name
+    // collisions with bubbles still produce a TS intersection,
+    // an acknowledged divergence).
     //
-    // Synthetic component roots (`__svn_self_default` for
-    // `<svelte:self>` and `(<expr>)` for `<svelte:component>`)
-    // would produce malformed `typeof` expressions. Skip those
-    // here — the lax fallback (`Record<string, any>`) lands via
-    // the type alias's untyped branch.
-    let bubbled_component_event_map: Option<String> =
-        if has_strict_events_decl || summary.bubbled_component_events.is_empty() {
+    // Per-entry kind tracks how to render the projection:
+    //   - Dom(scope)           → `<Map>[name]` per scope.
+    //   - Component(roots)     → `(__SvnComponentEvents<typeof A>[name] | …)`
+    //                            unioned across all contributing
+    //                            component roots.
+    //
+    // Merge rules (positional source-order traversal):
+    //   - DOM source for `name`           → REPLACE existing entry
+    //                                       with Dom (matches upstream
+    //                                       `bubbledEvents.set(...)`
+    //                                       in `event-handler.ts:18`).
+    //   - Component source for `name`     → if existing is Component:
+    //                                       append root (union); if
+    //                                       Dom or absent: REPLACE
+    //                                       with Component(vec![root]).
+    enum BubbleKind {
+        Dom(svn_analyze::BubbledDomEventScope),
+        Component(Vec<String>),
+    }
+    let bubbled_event_map: Option<String> = if has_strict_events_decl
+        || (summary.bubbled_dom_events.is_empty() && summary.bubbled_component_events.is_empty())
+    {
+        None
+    } else {
+        // Collect every bubble entry with its source position.
+        // `(position, name, kind)`.
+        let mut all: Vec<(u32, &str, BubbleKind)> = Vec::with_capacity(
+            summary.bubbled_dom_events.len() + summary.bubbled_component_events.len(),
+        );
+        for ev in &summary.bubbled_dom_events {
+            all.push((ev.position, ev.name.as_str(), BubbleKind::Dom(ev.scope)));
+        }
+        for ev in &summary.bubbled_component_events {
+            // Skip synthetic roots — `typeof __svn_self_default` /
+            // `typeof (<expr>)` aren't well-formed `typeof`
+            // expressions for arbitrary user code.
+            let root = ev.component_root.as_str();
+            if root == "__svn_self_default"
+                || root.starts_with('(')
+                || !root
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+            {
+                continue;
+            }
+            all.push((
+                ev.position,
+                ev.event_name.as_str(),
+                BubbleKind::Component(vec![root.to_string()]),
+            ));
+        }
+        all.sort_by_key(|(pos, _, _)| *pos);
+        // Apply merge rules in position order.
+        let mut entries: Vec<(&str, BubbleKind)> = Vec::new();
+        for (_, name, kind) in all {
+            let pos = entries.iter().position(|(n, _)| *n == name);
+            match (pos, kind) {
+                (Some(idx), BubbleKind::Dom(scope)) => {
+                    entries[idx].1 = BubbleKind::Dom(scope);
+                }
+                (Some(idx), BubbleKind::Component(roots)) => {
+                    let new_root = roots.into_iter().next().unwrap_or_default();
+                    match &mut entries[idx].1 {
+                        BubbleKind::Component(existing) => {
+                            if !existing.iter().any(|r| r == &new_root) {
+                                existing.push(new_root);
+                            }
+                        }
+                        BubbleKind::Dom(_) => {
+                            entries[idx].1 = BubbleKind::Component(vec![new_root]);
+                        }
+                    }
+                }
+                (None, kind) => {
+                    entries.push((name, kind));
+                }
+            }
+        }
+        let mut body = String::new();
+        for (i, (name, kind)) in entries.iter().enumerate() {
+            if i > 0 {
+                body.push_str(", ");
+            }
+            match kind {
+                BubbleKind::Dom(scope) => {
+                    // Reviewer follow-up #7: upstream svelte2tsx's shim
+                    // (`svelte-shims.d.ts:185-190`) declares
+                    // `__sveltets_2_mapBodyEvent` returning
+                    // `WindowEventMap[K]` and
+                    // `__sveltets_2_mapWindowEvent` returning
+                    // `HTMLBodyElementEventMap[K]`. The naming is
+                    // upstream-internal — looks swapped relative to
+                    // the DOM API, but it's the source of truth for
+                    // parity.
+                    let map_name = match scope {
+                        svn_analyze::BubbledDomEventScope::Element => "HTMLElementEventMap",
+                        svn_analyze::BubbledDomEventScope::SvelteBody => "WindowEventMap",
+                        svn_analyze::BubbledDomEventScope::SvelteWindow => "HTMLBodyElementEventMap",
+                    };
+                    let _ = write!(body, "{name:?}: {map_name}[{name:?}]");
+                }
+                BubbleKind::Component(roots) => {
+                    let union_parts: Vec<String> = roots
+                        .iter()
+                        .map(|r| format!("__SvnComponentEvents<typeof {r}>[{name:?}]"))
+                        .collect();
+                    let _ = write!(body, "{name:?}: ({})", union_parts.join(" | "));
+                }
+            }
+        }
+        if body.is_empty() {
             None
         } else {
-            // Reviewer follow-up #2 (round 4): same-name bubbled
-            // component events used to drop everything after the first
-            // — a `<Button on:click />` followed by `<Radio on:click />`
-            // discarded Radio's contribution. Upstream svelte2tsx
-            // (`event-handler.ts:55-60`) accumulates every bubble and
-            // wraps multiple sources via `__sveltets_2_unionType(...)`.
-            // At type-level we mirror with a TS union: `(A | B)`.
-            //
-            // Group by event name in walk order so the consumer's
-            // handler receives the union of every bubbled source's
-            // declared event type. Inner roots dedup by identity so a
-            // component bubbling the same event twice (rare) doesn't
-            // produce `T | T`.
-            let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
-            for ev in &summary.bubbled_component_events {
-                // Skip synthetic roots — `typeof __svn_self_default` /
-                // `typeof (<expr>)` aren't well-formed `typeof`
-                // expressions for arbitrary user code.
-                let root = ev.component_root.as_str();
-                if root == "__svn_self_default"
-                    || root.starts_with('(')
-                    || !root
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
-                {
-                    continue;
-                }
-                let name = ev.event_name.as_str();
-                if let Some(idx) = groups.iter().position(|(n, _)| *n == name) {
-                    if !groups[idx].1.contains(&root) {
-                        groups[idx].1.push(root);
-                    }
-                } else {
-                    groups.push((name, vec![root]));
-                }
-            }
-            let mut body = String::new();
-            for (i, (name, roots)) in groups.iter().enumerate() {
-                if i > 0 {
-                    body.push_str(", ");
-                }
-                let union_parts: Vec<String> = roots
-                    .iter()
-                    .map(|r| format!("__SvnComponentEvents<typeof {r}>[{name:?}]"))
-                    .collect();
-                let _ = write!(body, "{name:?}: ({})", union_parts.join(" | "));
-            }
-            if body.is_empty() {
-                None
-            } else {
-                Some(format!("{{ {body} }}"))
-            }
-        };
+            Some(format!("{{ {body} }}"))
+        }
+    };
 
     // SVELTE-4-COMPAT: rewrite `$: ...` reactive statements before
     // the Svelte-5-shaped passes run, so downstream code sees the
@@ -932,11 +927,8 @@ fn emit_document_with_render_name(
             "{{ [__svn_K in keyof ({t})]: CustomEvent<({t})[__svn_K]> }}"
         ));
     }
-    if let Some(b) = bubbled_dom_event_map.as_deref() {
+    if let Some(b) = bubbled_event_map.as_deref() {
         events_alias_parts.push(b.to_string());
-    }
-    if let Some(c) = bubbled_component_event_map.as_deref() {
-        events_alias_parts.push(c.to_string());
     }
     // Reviewer follow-up #1 (round 4): for NON-strict mode,
     // intersect the collected events with the lax index signature
@@ -1167,9 +1159,8 @@ fn emit_document_with_render_name(
     // without events, the fn shape stays unmarked. Iso shape still
     // gets the marker on any non-None alias because the typed
     // branch of `__svn_ensure_component` keys on it.
-    let has_synth_events_content = synthesized_events_type.is_some()
-        || bubbled_dom_event_map.is_some()
-        || bubbled_component_event_map.is_some();
+    let has_synth_events_content =
+        synthesized_events_type.is_some() || bubbled_event_map.is_some();
     if is_ts {
         let has_bubbled_events =
             !summary.bubbled_dom_events.is_empty() || summary.has_bubbled_component_event;

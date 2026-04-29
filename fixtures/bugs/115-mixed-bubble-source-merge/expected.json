@@ -1,0 +1,11 @@
+{
+    "errors": [
+        {
+            "file": "Consumer.svelte",
+            "line": 20,
+            "column": 19,
+            "code": 2345
+        }
+    ],
+    "_note": "Reviewer follow-up #1 (round 5): when a wrapper has BOTH `<Inner on:click />` (component bubble) AND `<button on:click>` (DOM bubble) for the SAME event name, pre-fix the two were built into separate type fragments and INTERSECTED — neither shape was a usable consumer-handler arg. Upstream svelte2tsx runs all bubbles through one `EventHandler.bubbledEvents` map; DOM bubbles call `Map.set` (overwrite), component bubbles accumulate (later unioned via `__sveltets_2_unionType`). Post-fix native merges DOM and component bubbles into ONE position-ordered map: DOM source REPLACES the entry; component source after a Component entry APPENDS (union); component after DOM REPLACES with the component projection. In this fixture the order Inner-component → button-DOM resolves `click` to the DOM event (HTMLElementEventMap['click']) — the consumer's MouseEvent handler passes; the CustomEvent handler typed for Inner's payload now correctly fails TS2345."
+}

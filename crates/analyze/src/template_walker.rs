@@ -181,6 +181,11 @@ pub struct BubbledComponentEvent {
     /// falls back to `Record<string, any>` for the event type
     /// (matches upstream's any-fallback for dynamic components).
     pub component_root: SmolStr,
+    /// Source-byte position of the directive (start of the
+    /// `on:NAME` token). Used by emit to merge DOM + component
+    /// bubbles in source order with last-wins dedup, matching
+    /// upstream's `EventHandler.bubbledEvents.set(...)` semantics.
+    pub position: u32,
 }
 
 /// Source-element kind for a bubbled `on:NAME` directive — drives the
@@ -210,6 +215,11 @@ pub struct BubbledDomEvent {
     pub name: SmolStr,
     /// Which event-map the projection draws from.
     pub scope: BubbledDomEventScope,
+    /// Source-byte position of the directive (start of the
+    /// `on:NAME` token). Used by emit to merge DOM + component
+    /// bubbles in source order with last-wins dedup, matching
+    /// upstream's `EventHandler.bubbledEvents.set(...)` semantics.
+    pub position: u32,
 }
 
 /// Expression-text source for one slot attr.
@@ -1127,6 +1137,7 @@ fn collect_bubbled_dom_events(
         summary.bubbled_dom_events.push(BubbledDomEvent {
             name: d.name.clone(),
             scope,
+            position: d.range.start,
         });
     }
 }
@@ -1449,6 +1460,7 @@ fn collect_instantiation_inner(
                             .push(BubbledComponentEvent {
                                 event_name: d.name.clone(),
                                 component_root: component_root.clone(),
+                                position: d.range.start,
                             });
                     }
                     continue;
