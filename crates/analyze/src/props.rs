@@ -883,28 +883,32 @@ pub fn find_dispatched_event_names(
     dispatcher_locals: &[String],
 ) -> Vec<String> {
     use std::collections::{HashMap, HashSet};
-    // First pass: collect `const NAME = 'literal'` bindings anywhere
-    // in the script. Resolves the (#3c) string-literal variable form
-    // so `const ev = 'click'; dispatch(ev)` contributes 'click' to
-    // the synthesised event set.
+    // Round-11 follow-up #2: single source-order walk that grows
+    // `literal_vars` as we encounter `const NAME = 'literal'`
+    // bindings. Pre-fix native ran a separate pre-pass that
+    // populated literal_vars globally before any dispatched-name
+    // scan — that overcounted FORWARD references like
+    // `dispatch(EV); const EV = 'save'`, which upstream's
+    // single-walk semantics drop (the call sees EV before the
+    // declaration so EV isn't yet in stringVars).
     //
-    // Round-10 follow-up #3: pre-fix this was top-level only — a
-    // `const ev = 'save'` inside `function f(){ … dispatch(ev) }`
-    // didn't resolve, so the dispatched name was missed. The
-    // dispatched-name scan recurses through Function/Block/If/Arrow/
-    // Function expression bodies; the literal-var collection now
-    // mirrors the same recursion.
+    // We register the literal binding BEFORE walking the init
+    // expression — matching upstream's `checkIfIsStringLiteralDecl`
+    // in `processInstanceScriptContent.ts`'s VariableStatement
+    // visitor (which fires before the TS walker descends into the
+    // init's children). For `const X = 'literal'` the init has no
+    // nested calls; for `const X = (() => { dispatch(X) })()` the
+    // init's IIFE body is walked AFTER X is registered (if X had
+    // been a string literal, but here it isn't, so X never
+    // registers).
     let mut literal_vars: HashMap<String, String> = HashMap::new();
-    for stmt in &program.body {
-        scan_statement_for_literal_vars(stmt, &mut literal_vars);
-    }
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<String> = Vec::new();
     for stmt in &program.body {
-        scan_statement_for_dispatched_names(
+        scan_statement_in_source_order(
             stmt,
             dispatcher_locals,
-            &literal_vars,
+            &mut literal_vars,
             &mut seen,
             &mut out,
         );
@@ -912,59 +916,134 @@ pub fn find_dispatched_event_names(
     out
 }
 
-/// Round-10 follow-up #3: walk the program statement tree
-/// collecting `const NAME = 'literal'` bindings into `literal_vars`.
-/// Recurses through Function/Block/If statements AND into arrow/
-/// function expression bodies attached as variable initializers
-/// (matches `scan_statement_for_dispatched_names`'s recursion).
-fn scan_statement_for_literal_vars(
+/// Round-11 follow-up #2: single source-order walk. For each
+/// statement, populates literal-var bindings BEFORE descending
+/// into the init's expression scan (matches upstream's
+/// VariableStatement visitor order). Forward references
+/// (`dispatch(EV); const EV = 'save'`) don't resolve because the
+/// call is visited before the binding is registered.
+fn scan_statement_in_source_order(
     stmt: &Statement<'_>,
+    dispatcher_locals: &[String],
     literal_vars: &mut std::collections::HashMap<String, String>,
+    seen: &mut std::collections::HashSet<String>,
+    out: &mut Vec<String>,
 ) {
     match stmt {
         Statement::VariableDeclaration(decl) => {
-            // Limit to `const` to be conservative — `let` vars can
-            // be reassigned and the static name would lie about the
-            // dispatched set.
             let is_const =
                 matches!(decl.kind, oxc_ast::ast::VariableDeclarationKind::Const);
             for d in &decl.declarations {
+                // Register the literal binding FIRST, then walk the
+                // init for any nested calls/function bodies (so the
+                // newly-registered name is visible inside subsequent
+                // statements but NOT inside this declarator's own
+                // init — matches upstream's visit-then-recurse
+                // ordering).
+                if is_const
+                    && let BindingPattern::BindingIdentifier(bid) = &d.id
+                    && let Some(Expression::StringLiteral(s)) = &d.init
+                {
+                    literal_vars.insert(bid.name.to_string(), s.value.to_string());
+                }
                 if let Some(init) = &d.init {
-                    if is_const
-                        && let BindingPattern::BindingIdentifier(bid) = &d.id
-                        && let Expression::StringLiteral(s) = init
-                    {
-                        literal_vars.insert(bid.name.to_string(), s.value.to_string());
-                    }
-                    // Recurse into a function/arrow body initializer
-                    // for nested `const NAME = 'literal'`.
+                    scan_expression_for_dispatched_names(
+                        init,
+                        dispatcher_locals,
+                        literal_vars,
+                        seen,
+                        out,
+                    );
                     for s in statements_inside_function_expr(init) {
-                        scan_statement_for_literal_vars(s, literal_vars);
+                        scan_statement_in_source_order(
+                            s,
+                            dispatcher_locals,
+                            literal_vars,
+                            seen,
+                            out,
+                        );
                     }
                 }
+            }
+        }
+        Statement::ExpressionStatement(es) => {
+            scan_expression_for_dispatched_names(
+                &es.expression,
+                dispatcher_locals,
+                literal_vars,
+                seen,
+                out,
+            );
+            for s in statements_inside_function_expr(&es.expression) {
+                scan_statement_in_source_order(
+                    s,
+                    dispatcher_locals,
+                    literal_vars,
+                    seen,
+                    out,
+                );
             }
         }
         Statement::FunctionDeclaration(fd) => {
             if let Some(body) = &fd.body {
                 for s in &body.statements {
-                    scan_statement_for_literal_vars(s, literal_vars);
+                    scan_statement_in_source_order(
+                        s,
+                        dispatcher_locals,
+                        literal_vars,
+                        seen,
+                        out,
+                    );
                 }
             }
         }
         Statement::IfStatement(s) => {
-            scan_statement_for_literal_vars(&s.consequent, literal_vars);
+            scan_statement_in_source_order(
+                &s.consequent,
+                dispatcher_locals,
+                literal_vars,
+                seen,
+                out,
+            );
             if let Some(alt) = &s.alternate {
-                scan_statement_for_literal_vars(alt, literal_vars);
+                scan_statement_in_source_order(
+                    alt,
+                    dispatcher_locals,
+                    literal_vars,
+                    seen,
+                    out,
+                );
             }
         }
         Statement::BlockStatement(b) => {
             for s in &b.body {
-                scan_statement_for_literal_vars(s, literal_vars);
+                scan_statement_in_source_order(
+                    s,
+                    dispatcher_locals,
+                    literal_vars,
+                    seen,
+                    out,
+                );
             }
         }
-        Statement::ExpressionStatement(es) => {
-            for s in statements_inside_function_expr(&es.expression) {
-                scan_statement_for_literal_vars(s, literal_vars);
+        Statement::ReturnStatement(rs) => {
+            if let Some(arg) = &rs.argument {
+                scan_expression_for_dispatched_names(
+                    arg,
+                    dispatcher_locals,
+                    literal_vars,
+                    seen,
+                    out,
+                );
+                for s in statements_inside_function_expr(arg) {
+                    scan_statement_in_source_order(
+                        s,
+                        dispatcher_locals,
+                        literal_vars,
+                        seen,
+                        out,
+                    );
+                }
             }
         }
         _ => {}
