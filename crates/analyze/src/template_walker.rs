@@ -189,12 +189,17 @@ pub struct BubbledComponentEvent {
 /// type (`Element` / `Body` / `Window`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BubbledDomEventScope {
-    /// Regular DOM element (`<button on:click>`) — uses
-    /// `HTMLElementEventMap`.
+    /// Regular DOM element (`<button on:click>`) — emit projects
+    /// via `HTMLElementEventMap[NAME]`.
     Element,
-    /// `<svelte:body on:click>` — uses `HTMLBodyElementEventMap`.
+    /// `<svelte:body on:click>` — emit projects via
+    /// `WindowEventMap[NAME]` (mirrors upstream svelte2tsx's odd
+    /// shim convention where `__sveltets_2_mapBodyEvent` returns
+    /// `WindowEventMap[K]` — see `svelte-shims.d.ts:185-190`).
     SvelteBody,
-    /// `<svelte:window on:resize>` — uses `WindowEventMap`.
+    /// `<svelte:window on:resize>` — emit projects via
+    /// `HTMLBodyElementEventMap[NAME]` (same upstream-internal
+    /// swap as `SvelteBody`).
     SvelteWindow,
 }
 
@@ -1439,10 +1444,12 @@ fn collect_instantiation_inner(
                         // bubbled name. Emit projects via
                         // `__SvnComponentEvents<typeof <root>>["NAME"]`
                         // and intersects with `events_alias_body`.
-                        summary.bubbled_component_events.push(BubbledComponentEvent {
-                            event_name: d.name.clone(),
-                            component_root: component_root.clone(),
-                        });
+                        summary
+                            .bubbled_component_events
+                            .push(BubbledComponentEvent {
+                                event_name: d.name.clone(),
+                                component_root: component_root.clone(),
+                            });
                     }
                     continue;
                 }

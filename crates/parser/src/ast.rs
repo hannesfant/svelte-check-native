@@ -232,7 +232,8 @@ pub struct PlainAttr {
 }
 
 /// Value of a plain attribute. A sequence of literal text and `{expr}`
-/// interpolations. For unquoted values this is always a single Text part.
+/// interpolations. Both quoted and unquoted forms produce mixed
+/// Text / Expression parts when interpolations are present.
 #[derive(Debug, Clone)]
 pub struct AttrValue {
     pub parts: Vec<AttrValuePart>,

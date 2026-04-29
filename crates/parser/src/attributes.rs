@@ -15,13 +15,16 @@
 //! - Directive modifiers: `on:click|once|preventDefault={handler}`
 //! - Bind getter/setter pair: `bind:value={getter, setter}`
 //!
-//! ### What's NOT covered yet
+//! ### Attribute-value interpolations
 //!
-//! - **Interpolations inside quoted attribute values** (e.g. `class="a {b} c"`).
-//!   Quoted values are currently stored as a single literal Text part. Real
-//!   parsing of `{expr}` islands inside quoted strings — needed so that
-//!   identifiers like `b` inside `style:left="{b}px"` are seen as
-//!   referenced — is not yet implemented.
+//! Both quoted (`class="a {b} c"`) and unquoted (`label=hi{x}there`)
+//! attribute values flush Text chunks on `{` and parse the mustache
+//! body via the shared brace-balancing scanner, producing mixed
+//! Text / Expression `AttrValuePart`s. Downstream emit (component
+//! prop literals, element createElement attrs) walks the parts and
+//! reassembles each value as a TS template literal, so embedded
+//! expressions get contextual typing and identifier references are
+//! visible to TS.
 
 use smol_str::SmolStr;
 use svn_core::Range;
@@ -225,7 +228,10 @@ fn parse_named_attribute(
             // quotes for things like `[&>li]:before:content-['•']`
             // — upstream svelte-check rejects those too, so emitting
             // a malformed directive there is the correct surface.
-            if matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b'=' | b'>' | b'<' | b'"' | b'\'') {
+            if matches!(
+                b,
+                b' ' | b'\t' | b'\n' | b'\r' | b'=' | b'>' | b'<' | b'"' | b'\''
+            ) {
                 break;
             }
             if b == b'[' {
@@ -234,8 +240,7 @@ fn parse_named_attribute(
                 bracket_depth -= 1;
             }
             scanner.advance_byte();
-        } else if b.is_ascii_alphanumeric()
-            || matches!(b, b'-' | b'_' | b':' | b'.' | b'$' | b'|')
+        } else if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.' | b'$' | b'|')
         {
             // Note: `/` is NOT accepted outside brackets — it would
             // swallow the self-closing `/>` terminator (`<input
@@ -473,8 +478,8 @@ fn parse_attr_value(scanner: &mut Scanner<'_>, errors: &mut Vec<ParseError>) -> 
                 if b == b'{' {
                     let text_end = scanner.pos();
                     if text_end > chunk_start {
-                        let content = scanner.source()[chunk_start as usize..text_end as usize]
-                            .to_string();
+                        let content =
+                            scanner.source()[chunk_start as usize..text_end as usize].to_string();
                         parts.push(AttrValuePart::Text {
                             content,
                             range: Range::new(chunk_start, text_end),

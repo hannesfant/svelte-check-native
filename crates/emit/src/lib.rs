@@ -48,6 +48,7 @@
 
 mod default_export;
 mod destructure_idents;
+mod dispatcher_typing_rewrite;
 mod emit_buffer;
 mod hoisted_imports;
 mod htmlxtojsx_utils;
@@ -61,7 +62,6 @@ mod props_emit;
 mod render_function;
 mod script_body_rewrites;
 mod script_template_analysis;
-mod dispatcher_typing_rewrite;
 mod state_nullish_rewrite;
 mod void_block;
 // SVELTE-4-COMPAT: droppable submodule for Svelte-4 emit rewrites.
@@ -313,10 +313,8 @@ fn emit_document_with_render_name(
     // whitespace before `=`) / `type $$Events<T>=…` (generic).
     // Computed once and threaded through to every gate that used to
     // call `has_strict_events_decl`.
-    let has_strict_events_decl = svelte4::compat::has_strict_events_ast(
-        parsed_instance.as_ref(),
-        parsed_module.as_ref(),
-    );
+    let has_strict_events_decl =
+        svelte4::compat::has_strict_events_ast(parsed_instance.as_ref(), parsed_module.as_ref());
 
     // Single analyze-time resolution of every Props decision emit
     // makes downstream — type text, type root name, destructure
@@ -600,65 +598,64 @@ fn emit_document_with_render_name(
     // would produce malformed `typeof` expressions. Skip those
     // here — the lax fallback (`Record<string, any>`) lands via
     // the type alias's untyped branch.
-    let bubbled_component_event_map: Option<String> = if has_strict_events_decl
-        || summary.bubbled_component_events.is_empty()
-    {
-        None
-    } else {
-        // Reviewer follow-up #2 (round 4): same-name bubbled
-        // component events used to drop everything after the first
-        // — a `<Button on:click />` followed by `<Radio on:click />`
-        // discarded Radio's contribution. Upstream svelte2tsx
-        // (`event-handler.ts:55-60`) accumulates every bubble and
-        // wraps multiple sources via `__sveltets_2_unionType(...)`.
-        // At type-level we mirror with a TS union: `(A | B)`.
-        //
-        // Group by event name in walk order so the consumer's
-        // handler receives the union of every bubbled source's
-        // declared event type. Inner roots dedup by identity so a
-        // component bubbling the same event twice (rare) doesn't
-        // produce `T | T`.
-        let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
-        for ev in &summary.bubbled_component_events {
-            // Skip synthetic roots — `typeof __svn_self_default` /
-            // `typeof (<expr>)` aren't well-formed `typeof`
-            // expressions for arbitrary user code.
-            let root = ev.component_root.as_str();
-            if root == "__svn_self_default"
-                || root.starts_with('(')
-                || !root
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
-            {
-                continue;
-            }
-            let name = ev.event_name.as_str();
-            if let Some(idx) = groups.iter().position(|(n, _)| *n == name) {
-                if !groups[idx].1.iter().any(|r| *r == root) {
-                    groups[idx].1.push(root);
-                }
-            } else {
-                groups.push((name, vec![root]));
-            }
-        }
-        let mut body = String::new();
-        for (i, (name, roots)) in groups.iter().enumerate() {
-            if i > 0 {
-                body.push_str(", ");
-            }
-            let union_parts: Vec<String> = roots
-                .iter()
-                .map(|r| format!("__SvnComponentEvents<typeof {r}>[{name:?}]"))
-                .collect();
-            let _ = write!(body, "{name:?}: ({})", union_parts.join(" | "));
-        }
-        if body.is_empty() {
+    let bubbled_component_event_map: Option<String> =
+        if has_strict_events_decl || summary.bubbled_component_events.is_empty() {
             None
         } else {
-            Some(format!("{{ {body} }}"))
-        }
-    };
+            // Reviewer follow-up #2 (round 4): same-name bubbled
+            // component events used to drop everything after the first
+            // — a `<Button on:click />` followed by `<Radio on:click />`
+            // discarded Radio's contribution. Upstream svelte2tsx
+            // (`event-handler.ts:55-60`) accumulates every bubble and
+            // wraps multiple sources via `__sveltets_2_unionType(...)`.
+            // At type-level we mirror with a TS union: `(A | B)`.
+            //
+            // Group by event name in walk order so the consumer's
+            // handler receives the union of every bubbled source's
+            // declared event type. Inner roots dedup by identity so a
+            // component bubbling the same event twice (rare) doesn't
+            // produce `T | T`.
+            let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
+            for ev in &summary.bubbled_component_events {
+                // Skip synthetic roots — `typeof __svn_self_default` /
+                // `typeof (<expr>)` aren't well-formed `typeof`
+                // expressions for arbitrary user code.
+                let root = ev.component_root.as_str();
+                if root == "__svn_self_default"
+                    || root.starts_with('(')
+                    || !root
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+                {
+                    continue;
+                }
+                let name = ev.event_name.as_str();
+                if let Some(idx) = groups.iter().position(|(n, _)| *n == name) {
+                    if !groups[idx].1.contains(&root) {
+                        groups[idx].1.push(root);
+                    }
+                } else {
+                    groups.push((name, vec![root]));
+                }
+            }
+            let mut body = String::new();
+            for (i, (name, roots)) in groups.iter().enumerate() {
+                if i > 0 {
+                    body.push_str(", ");
+                }
+                let union_parts: Vec<String> = roots
+                    .iter()
+                    .map(|r| format!("__SvnComponentEvents<typeof {r}>[{name:?}]"))
+                    .collect();
+                let _ = write!(body, "{name:?}: ({})", union_parts.join(" | "));
+            }
+            if body.is_empty() {
+                None
+            } else {
+                Some(format!("{{ {body} }}"))
+            }
+        };
 
     // SVELTE-4-COMPAT: rewrite `$: ...` reactive statements before
     // the Svelte-5-shaped passes run, so downstream code sees the
@@ -877,7 +874,10 @@ fn emit_document_with_render_name(
     // gets its Props through `Awaited<ReturnType<typeof
     // $$render>>['props']` which already projects the destructure's
     // declared type. Skipping the alias on JS is safe.
-    if is_ts && alias_in_render_body && let Some(body) = alias_body.as_deref() {
+    if is_ts
+        && alias_in_render_body
+        && let Some(body) = alias_body.as_deref()
+    {
         let _ = writeln!(buf, "    type $$ComponentProps = {body};");
     }
     // Synthesised `type $$Events = { [K in keyof <T>]:
@@ -919,8 +919,9 @@ fn emit_document_with_render_name(
     // is the right outcome.
     let mut events_alias_parts: Vec<String> = Vec::new();
     if let Some(t) = synthesized_events_type.as_deref() {
-        events_alias_parts
-            .push(format!("{{ [__svn_K in keyof ({t})]: CustomEvent<({t})[__svn_K]> }}"));
+        events_alias_parts.push(format!(
+            "{{ [__svn_K in keyof ({t})]: CustomEvent<({t})[__svn_K]> }}"
+        ));
     }
     if let Some(b) = bubbled_dom_event_map.as_deref() {
         events_alias_parts.push(b.to_string());
@@ -982,9 +983,7 @@ fn emit_document_with_render_name(
     // strict event narrowing for JS overlays is a separate (larger)
     // port that requires JSDoc-friendly equivalents of the
     // mapped/conditional types this alias produces.
-    if is_ts
-        && let Some(body) = events_alias_body.as_deref()
-    {
+    if is_ts && let Some(body) = events_alias_body.as_deref() {
         let _ = writeln!(buf, "    type $$Events = {body};");
     }
     let ScriptAndTemplateAnalysis {

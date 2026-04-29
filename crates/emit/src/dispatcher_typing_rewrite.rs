@@ -68,10 +68,7 @@ pub fn rewrite(content: &str, lang: ScriptLang) -> String {
             if call.type_arguments.is_some() {
                 continue;
             }
-            insertions.push((
-                callee_id.span.end as usize,
-                "<__SvnCustomEvents<$$Events>>",
-            ));
+            insertions.push((callee_id.span.end as usize, "<__SvnCustomEvents<$$Events>>"));
         }
     }
 
