@@ -473,47 +473,95 @@ fn emit_document_with_render_name(
     // (their declaration is authoritative). For every other case
     // — strict trigger or not — collect, then decide widening at
     // alias-body composition time.
-    let synthesized_events_type: Option<String> = if has_strict_events_decl {
-        None
-    } else {
-        let typed_args: Vec<String> = parsed_instance
-            .as_ref()
-            .zip(doc.instance_script.as_ref())
-            .map(|(p, s)| svn_analyze::find_dispatcher_event_type_sources(&p.program, s.content))
-            .unwrap_or_default();
-        let untyped_names: Vec<String> = parsed_instance
-            .as_ref()
-            .map(|p| {
-                let all_locals = svn_analyze::find_dispatcher_local_names(&p.program);
-                if all_locals.is_empty() {
-                    return Vec::new();
-                }
-                let typed_locals = svn_analyze::find_typed_dispatcher_local_names(&p.program);
-                let untyped_locals: Vec<String> = all_locals
-                    .into_iter()
-                    .filter(|n| !typed_locals.iter().any(|t| t == n))
-                    .collect();
-                if untyped_locals.is_empty() {
-                    return Vec::new();
-                }
-                svn_analyze::find_dispatched_event_names(&p.program, &untyped_locals)
-            })
-            .unwrap_or_default();
-        if typed_args.is_empty() && untyped_names.is_empty() {
-            None
+    // Round-7 follow-up #5: keep typed-dispatcher and untyped-
+    // dispatched halves separate at synthesis time. Upstream's
+    // `toDefString` emits them at DIFFERENT positions in the events
+    // object literal: typed dispatchers spread first, bubbles next,
+    // untyped/duplicate-typed-collapse last. JS spread/object-key
+    // semantics make the LAST occurrence of any key win, which is
+    // why upstream's untyped names override bubbles which override
+    // typed dispatchers. Pre-fix native folded both into one
+    // intersection string and bubble overrode BOTH (round-6 #1) —
+    // upstream's "untyped overrides bubble" wasn't captured.
+    let (synthesized_typed_events, synthesized_untyped_events): (Option<String>, Option<String>) =
+        if has_strict_events_decl {
+            (None, None)
         } else {
-            let mut parts: Vec<String> = typed_args.iter().map(|t| format!("({t})")).collect();
-            if !untyped_names.is_empty() {
+            let typed_args: Vec<String> = parsed_instance
+                .as_ref()
+                .zip(doc.instance_script.as_ref())
+                .map(|(p, s)| {
+                    svn_analyze::find_dispatcher_event_type_sources(&p.program, s.content)
+                })
+                .unwrap_or_default();
+            let untyped_names: Vec<String> = parsed_instance
+                .as_ref()
+                .map(|p| {
+                    let all_locals = svn_analyze::find_dispatcher_local_names(&p.program);
+                    if all_locals.is_empty() {
+                        return Vec::new();
+                    }
+                    let typed_locals = svn_analyze::find_typed_dispatcher_local_names(&p.program);
+                    let untyped_locals: Vec<String> = all_locals
+                        .into_iter()
+                        .filter(|n| !typed_locals.iter().any(|t| t == n))
+                        .collect();
+                    if untyped_locals.is_empty() {
+                        return Vec::new();
+                    }
+                    svn_analyze::find_dispatched_event_names(&p.program, &untyped_locals)
+                })
+                .unwrap_or_default();
+            // Typed dispatcher source intersect: `{...toEventTypings<T1>(),
+            // ...toEventTypings<T2>()}` upstream → `(T1) & (T2)` here. The
+            // mapped type wraps these into the per-key `CustomEvent<…>`
+            // shape at combine time. Note: TS intersection of
+            // `{foo: A} & {foo: B}` is `{foo: A & B}` — for `string &
+            // number = never` that diverges from upstream, where the
+            // `addToEvents` collision detector pushes the duplicate name
+            // into `dispatchedEvents` and emits it as
+            // `'foo': customEvent` last, collapsing to
+            // `CustomEvent<any>`. We don't enumerate type-arg keys at
+            // synth time so can't detect that collision; left as an
+            // acknowledged divergence (rare in practice).
+            let typed = if typed_args.is_empty() {
+                None
+            } else {
+                Some(
+                    typed_args
+                        .iter()
+                        .map(|t| format!("({t})"))
+                        .collect::<Vec<_>>()
+                        .join(" & "),
+                )
+            };
+            // Untyped dispatched names: each gets `CustomEvent<any>`
+            // at the type level (mirrors upstream's
+            // `__sveltets_2_customEvent` shim, declared as
+            // `CustomEvent<any>`). Emitted at the LAST layer of the
+            // events object, overriding any earlier typed/bubble
+            // entry for the same name.
+            let untyped = if untyped_names.is_empty() {
+                None
+            } else {
                 let body = untyped_names
                     .iter()
-                    .map(|n| format!("{n:?}: any"))
+                    .map(|n| format!("{n:?}: CustomEvent<any>"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                parts.push(format!("{{ {body} }}"));
-            }
-            Some(parts.join(" & "))
-        }
-    };
+                Some(format!("{{ {body} }}"))
+            };
+            (typed, untyped)
+        };
+    // Round-7 #6 hook: the fn-shape gate uses
+    // `synthesized_events_type.is_some()` as a stand-in for upstream's
+    // `events.size > 0` from dispatcher sources. Compute the same
+    // OR over our two halves.
+    let synthesized_events_type: Option<()> =
+        match (synthesized_typed_events.as_deref(), synthesized_untyped_events.as_deref()) {
+            (None, None) => None,
+            _ => Some(()),
+        };
     // Reviewer item #3c part 2: bare `<button on:click>` directives on
     // a DOM element forward the native DOM event to a parent listener.
     // At type-check time, the consumer's `<Child on:click={cb}>` should
@@ -937,33 +985,47 @@ fn emit_document_with_render_name(
     //      shape; component-bubbled events project through
     //      `__SvnComponentEvents<…>[NAME]`.
     //
-    // Round-6 follow-up #1: for same-name keys in BOTH halves
-    // (user dispatched 'click' AND has `<button on:click>`),
-    // upstream's emit treats the bubble map as a JS object literal
-    // SPREAD AFTER the dispatcher mapped type — bubble keys
-    // OVERRIDE dispatcher keys (`{...toEventTypings<{click: …}>(),
-    // 'click': mapElementEvent('click')}`, see upstream
-    // `addComponentExport.ts:_events()` and the `ts-event-dispatchers-
-    // same-event` fixture's `expectedv2.ts`). Pre-fix native built
-    // the two as separate intersected fragments which collapsed
-    // collisions to `CustomEvent<any> & MouseEvent` — neither shape
-    // a usable consumer-handler-arg type. Now we model upstream's
-    // spread semantics at the type level: when both halves are
-    // present, drop the bubble keys from the dispatcher mapped type
-    // first via `Omit<Dispatcher, keyof Bubble>`, then intersect.
-    // Same-name → bubble wins; non-overlapping keys keep both.
-    let events_combined: Option<String> = match (
-        synthesized_events_type.as_deref(),
-        bubbled_event_map.as_deref(),
-    ) {
-        (Some(t), Some(b)) => Some(format!(
-            "Omit<{{ [__svn_K in keyof ({t})]: CustomEvent<({t})[__svn_K]> }}, keyof ({b})> & ({b})"
-        )),
-        (Some(t), None) => Some(format!(
-            "{{ [__svn_K in keyof ({t})]: CustomEvent<({t})[__svn_K]> }}"
-        )),
-        (None, Some(b)) => Some(b.to_string()),
-        (None, None) => None,
+    // Round-7 follow-up #5: layer the three event sources in
+    // upstream's `toDefString` order. Each subsequent layer overrides
+    // the keys of the previous via `Omit<prev, keyof curr> & curr` —
+    // the type-level analogue of upstream's value-position spread:
+    //
+    //   typed dispatcher spreads  (= `...toEventTypings<T>()`)
+    //   bubble entries            (= `'click': mapElementEvent(…)`)
+    //   untyped dispatched names  (= `'foo': customEvent`)
+    //
+    // Round-6 follow-up #1 only handled (typed + bubble); pre-round-7
+    // had bubble overriding ALL dispatcher keys, including untyped
+    // names. Upstream emits untyped names AFTER bubbles, so untyped
+    // wins. The duplicate-typed-name collapse (where a key shared by
+    // multiple typed dispatchers becomes `CustomEvent<any>` in
+    // upstream) is an acknowledged divergence: we'd need to enumerate
+    // type-arg keys at synth time to detect it, which our text-level
+    // type sources don't support.
+    fn wrap_typed_to_mapped(t: &str) -> String {
+        format!("{{ [__svn_K in keyof ({t})]: CustomEvent<({t})[__svn_K]> }}")
+    }
+    fn override_layer(prev: &str, curr: &str) -> String {
+        format!("Omit<{prev}, keyof ({curr})> & ({curr})")
+    }
+    let events_combined: Option<String> = {
+        let typed_mapped = synthesized_typed_events
+            .as_deref()
+            .map(wrap_typed_to_mapped);
+        // Layer in: bubble overrides typed.
+        let after_bubble = match (typed_mapped.as_deref(), bubbled_event_map.as_deref()) {
+            (Some(t), Some(b)) => Some(override_layer(t, b)),
+            (Some(t), None) => Some(t.to_string()),
+            (None, Some(b)) => Some(format!("({b})")),
+            (None, None) => None,
+        };
+        // Layer in: untyped overrides everything.
+        match (after_bubble.as_deref(), synthesized_untyped_events.as_deref()) {
+            (Some(prev), Some(u)) => Some(override_layer(prev, u)),
+            (Some(prev), None) => Some(prev.to_string()),
+            (None, Some(u)) => Some(format!("({u})")),
+            (None, None) => None,
+        }
     };
     // Reviewer follow-up #1 (round 4): for NON-strict mode,
     // intersect the collected events with the lax index signature

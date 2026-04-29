@@ -1,0 +1,11 @@
+{
+    "errors": [
+        {
+            "file": "Consumer.svelte",
+            "line": 19,
+            "column": 17,
+            "code": 2345
+        }
+    ],
+    "_note": "Round-7 follow-up #5: when the same event name is BOTH a DOM bubble AND an untyped dispatched name, upstream's `toDefString` emits them in order typed → bubble → untyped, with JS object-literal semantics making the LAST occurrence win. So a `<button on:click>` plus `dispatch('click', …)` lands `click` as `CustomEvent<any>` (the untyped customEvent), NOT the bubble's MouseEvent. Pre-round-7 native used `Omit<Dispatcher, keyof Bubble> & Bubble` which had bubble override even untyped names — wrong direction. Post-fix native layers `Omit<Omit<Typed, keyof Bubble> & Bubble, keyof Untyped> & Untyped` so untyped wins last. The CustomEvent handler passes; the MouseEvent handler is correctly rejected with TS2345."
+}
