@@ -453,7 +453,20 @@ fn emit_document_with_render_name(
     // `any` via the intersection (matches upstream's
     // `ComponentEvents.addEvent` "multiple definitions → any-typing"
     // behavior).
-    let synthesized_events_type: Option<String> = if !narrow_events || has_strict_events_decl {
+    // Reviewer follow-up #1 (round 4): drop the `narrow_events`
+    // gate. Upstream svelte2tsx's `ComponentEvents` ALWAYS collects
+    // typed dispatchers, untyped-dispatched names, and bubbled
+    // events regardless of strict mode. The strict-vs-lax decision
+    // applies AFTER collection: strict surfaces stay narrowed; lax
+    // surfaces add `__sveltets_2_with_any_event` (an intersection
+    // with `{ [evt: string]: CustomEvent<any> }`) so unknown event
+    // names still pass without losing the per-name typed entries.
+    //
+    // Skip synth only when the user declared `interface $$Events`
+    // (their declaration is authoritative). For every other case
+    // — strict trigger or not — collect, then decide widening at
+    // alias-body composition time.
+    let synthesized_events_type: Option<String> = if has_strict_events_decl {
         None
     } else {
         let typed_args: Vec<String> = parsed_instance
@@ -514,7 +527,7 @@ fn emit_document_with_render_name(
     // TS object type are unique; duplicates compile but produce noisy
     // diagnostics. Walk-order preserved for stable emit (snapshots).
     let bubbled_dom_event_map: Option<String> =
-        if !narrow_events || has_strict_events_decl || summary.bubbled_dom_events.is_empty() {
+        if has_strict_events_decl || summary.bubbled_dom_events.is_empty() {
             None
         } else {
             // Dedup by NAME (not by name+scope): the same event name on
@@ -568,7 +581,7 @@ fn emit_document_with_render_name(
     // would produce malformed `typeof` expressions. Skip those
     // here — the lax fallback (`Record<string, any>`) lands via
     // the type alias's untyped branch.
-    let bubbled_component_event_map: Option<String> = if !narrow_events
+    let bubbled_component_event_map: Option<String> = if has_strict_events_decl
         || summary.bubbled_component_events.is_empty()
     {
         None
@@ -896,31 +909,46 @@ fn emit_document_with_render_name(
     if let Some(c) = bubbled_component_event_map.as_deref() {
         events_alias_parts.push(c.to_string());
     }
+    // Reviewer follow-up #1 (round 4): for NON-strict mode,
+    // intersect the collected events with the lax index signature
+    // `{ [evt: string]: CustomEvent<any> }` so unknown event names
+    // still pass through. Mirrors upstream
+    // `__sveltets_2_with_any_event` in
+    // `svelte-shims.d.ts:243-246`: the events surface keeps each
+    // typed entry AND admits arbitrary-string lookups. Strict mode
+    // gets just the collected surface — no widening — so
+    // `on:NAME` for unknown names fails the typed-keys constraint.
+    //
+    // `has_strict_events_decl` (interface case) skips this whole
+    // block — `$$Events` resolves to the user's declaration at
+    // module scope, no body-local synth needed.
+    let lax_index_signature = "{ [evt: string]: CustomEvent<any> }";
     let events_alias_body: Option<String> = if !events_alias_parts.is_empty() {
-        Some(
-            events_alias_parts
-                .iter()
-                .map(|p| format!("({p})"))
-                .collect::<Vec<_>>()
-                .join(" & "),
-        )
+        let collected = events_alias_parts
+            .iter()
+            .map(|p| format!("({p})"))
+            .collect::<Vec<_>>()
+            .join(" & ");
+        if narrow_events {
+            Some(collected)
+        } else {
+            Some(format!("({collected}) & {lax_index_signature}"))
+        }
     } else if narrow_events && !has_strict_events_decl {
-        // Reviewer follow-up #2 (the original): when a strict
-        // trigger is in play (runes mode or `<script
-        // strictEvents>` attr) but no synth half fired, fall
-        // through with the empty surface `type $$Events = {}`.
-        // Mirrors upstream `_events(strictEvents=true, …)` in
+        // Strict trigger active but no events synth'd — emit the
+        // empty surface `type $$Events = {}`. Mirrors upstream
+        // `_events(strictEvents=true, …)` in
         // `addComponentExport.ts:416-418`: drops the
-        // `with_any_event` wrapper unconditionally on strict mode
-        // — even with no declared events — so consumers' `on:NAME`
+        // `with_any_event` wrapper unconditionally on strict mode —
+        // even with no declared events — so consumers' `on:NAME`
         // for any unknown name fails the empty `keyof $$Events`
         // constraint.
-        //
-        // `has_strict_events_decl` is the interface case: handled
-        // separately downstream — `$$Events` resolves to the user's
-        // declaration at module scope, no body-local synth needed.
         Some("{}".to_string())
     } else {
+        // Non-strict + no events synth'd: leave alias unset; the
+        // events_field gate falls through to the lax `{ [evt:
+        // string]: CustomEvent<any> }` shape directly (saves an
+        // unnecessary alias declaration).
         None
     };
     // Reviewer follow-up #1: gate the `type $$Events = …` alias on

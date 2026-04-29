@@ -8,6 +8,7 @@ declare const bye: { [key: string]: any } & ((...args: any[]) => any);
         btn: string;
     };
 async function $$render_6194130b() {
+    type $$Events = (({ [__svn_K in keyof ((Events))]: CustomEvent<((Events))[__svn_K]> })) & { [evt: string]: CustomEvent<any> };
 
                                                    
 
@@ -33,7 +34,7 @@ async function $$render_6194130b() {
         }
     });
     void dispatch;
-    return { props: undefined as any as (Record<string, never>), events: undefined as any as { [evt: string]: CustomEvent<any> }, slots: undefined as any as {}, bindings: undefined as any as string, exports: undefined as any as ({}) };
+    return { props: undefined as any as (Record<string, never>), events: undefined as any as $$Events, slots: undefined as any as {}, bindings: undefined as any as string, exports: undefined as any as ({}) };
 }
 $$render_6194130b;
 interface $$IsomorphicComponent {

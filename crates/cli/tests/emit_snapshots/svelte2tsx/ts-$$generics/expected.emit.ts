@@ -5,6 +5,7 @@
     type B = $$Generic<keyof A>;
     type C = $$Generic<boolean>;
 async function $$render_7c9879e0() {
+    type $$Events = (({ [__svn_K in keyof (({a: A}))]: CustomEvent<(({a: A}))[__svn_K]> })) & { [evt: string]: CustomEvent<any> };
 
                                                    
 
@@ -28,7 +29,7 @@ async function $$render_7c9879e0() {
     void a;
     void b;
     void getA;
-    return { props: undefined as any as ({ a: A; b: B; c: C; }), events: undefined as any as { [evt: string]: CustomEvent<any> }, slots: { 'default': { c: (c) } }, bindings: undefined as any as string, exports: undefined as any as ({ a: A; b: B; c: C; getA: () => void; }) };
+    return { props: undefined as any as ({ a: A; b: B; c: C; }), events: undefined as any as $$Events, slots: { 'default': { c: (c) } }, bindings: undefined as any as string, exports: undefined as any as ({ a: A; b: B; c: C; getA: () => void; }) };
 }
 $$render_7c9879e0;
 interface $$IsomorphicComponent {

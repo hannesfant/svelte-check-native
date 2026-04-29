@@ -5,6 +5,7 @@
   import Bar from './bar';
   import { createEventDispatcher } from 'svelte';
 async function $$render_39dbed3c() {
+    type $$Events = (({ [__svn_K in keyof (({swipe: string}))]: CustomEvent<(({swipe: string}))[__svn_K]> }) & ({ "click": HTMLElementEventMap["click"] })) & { [evt: string]: CustomEvent<any> };
 
                           
                                                  
@@ -22,7 +23,7 @@ async function $$render_39dbed3c() {
     });
     void bar;
     void foobar;
-    return { props: undefined as any as ({ bar: Bar; foobar?: typeof foobar; }), events: undefined as any as { [evt: string]: CustomEvent<any> }, slots: { 'default': { bar: (bar) } }, bindings: undefined as any as string, exports: undefined as any as ({ bar: Bar; foobar: typeof foobar; }) };
+    return { props: undefined as any as ({ bar: Bar; foobar?: typeof foobar; }), events: undefined as any as $$Events, slots: { 'default': { bar: (bar) } }, bindings: undefined as any as string, exports: undefined as any as ({ bar: Bar; foobar: typeof foobar; }) };
 }
 $$render_39dbed3c;
 interface $$IsomorphicComponent {
