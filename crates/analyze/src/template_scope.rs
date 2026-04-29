@@ -103,7 +103,12 @@ pub enum DestructureSeg {
     /// `siblings` list captures the OTHER property names at the
     /// same destructure level — the leaf type is
     /// `Omit<parent, sibling1 | sibling2 | …>`.
-    ObjectRest { siblings: Vec<SmolStr> },
+    ///
+    /// Round-12 #6: each sibling is either `Static` (literal-known
+    /// key, rendered as `"name"`) or `Typeof` (bare-ident computed
+    /// key, rendered as `typeof <ident>`). Mixed siblings union into
+    /// a single `Omit` exclusion.
+    ObjectRest { siblings: Vec<ObjectRestSibling> },
     /// Round-10 follow-up #4: array-pattern rest (`[a, b, ...tail]`'s
     /// `tail`). `skip` is the number of fixed elements that appeared
     /// BEFORE the rest. Rendered as
@@ -115,10 +120,21 @@ pub enum DestructureSeg {
     /// Round-11 follow-up #5: computed-key object-pattern entry whose
     /// key is a bare identifier (`{ [k]: v }`). The leaf type is
     /// `parent[typeof k]`. Non-bare-ident computed keys (e.g.
-    /// `{ ['lit']: v }` or `{ [a + 1]: v }`) fall back to no segment
-    /// — the leaf inherits the parent path, matching pre-fix
-    /// behaviour for those edge cases.
+    /// `{ ['lit']: v }` is handled as plain `Key` since the literal
+    /// is statically known; `{ [a + 1]: v }` falls back to no
+    /// segment — the leaf inherits the parent path).
     KeyTypeof(SmolStr),
+}
+
+/// Round-12 #6: kind of sibling captured in `ObjectRest.siblings`.
+/// Static keys are known at synth time (static identifier or string
+/// literal); Typeof keys are bare-ident computed keys whose value
+/// is only knowable at type-check time. Both contribute to the
+/// rest's `Omit<…, …>` exclusion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObjectRestSibling {
+    Static(SmolStr),
+    Typeof(SmolStr),
 }
 
 /// Output of [`collect_pattern_bindings`]. Bindings are emitted in
@@ -189,36 +205,62 @@ fn walk(
             });
         }
         BindingPattern::ObjectPattern(op) => {
-            // Collect sibling names FIRST so the rest-leaf has the
-            // full list to subtract. Static-identifier and string-
-            // literal keys go in; computed/non-static keys are
-            // skipped (the rest excludes only enumerable static
-            // keys at the type level too).
-            let mut sibling_keys: Vec<SmolStr> = Vec::new();
+            // Collect sibling key info FIRST so the rest-leaf has the
+            // full list to subtract.
+            //   - static identifier / string literal       → Static
+            //   - computed string-literal `['id']`         → Static
+            //     (literal known at synth time)
+            //   - computed bare ident `[k]`                → Typeof
+            //     (resolves at type-check time)
+            //   - computed non-static (`[a + 1]`)          → skipped
+            //     (rest's Omit can't exclude it cleanly)
+            let mut sibling_keys: Vec<ObjectRestSibling> = Vec::new();
             for prop in &op.properties {
-                match &prop.key {
-                    oxc_ast::ast::PropertyKey::StaticIdentifier(id) => {
-                        sibling_keys.push(SmolStr::from(id.name.as_str()));
+                if prop.computed {
+                    match &prop.key {
+                        oxc_ast::ast::PropertyKey::StringLiteral(s) => {
+                            sibling_keys
+                                .push(ObjectRestSibling::Static(SmolStr::from(s.value.as_str())));
+                        }
+                        oxc_ast::ast::PropertyKey::Identifier(id) => {
+                            sibling_keys
+                                .push(ObjectRestSibling::Typeof(SmolStr::from(id.name.as_str())));
+                        }
+                        _ => {}
                     }
-                    oxc_ast::ast::PropertyKey::StringLiteral(s) => {
-                        sibling_keys.push(SmolStr::from(s.value.as_str()));
+                } else {
+                    match &prop.key {
+                        oxc_ast::ast::PropertyKey::StaticIdentifier(id) => {
+                            sibling_keys
+                                .push(ObjectRestSibling::Static(SmolStr::from(id.name.as_str())));
+                        }
+                        oxc_ast::ast::PropertyKey::StringLiteral(s) => {
+                            sibling_keys
+                                .push(ObjectRestSibling::Static(SmolStr::from(s.value.as_str())));
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
             for prop in &op.properties {
-                // Round-11 follow-up #5: detect computed-key with bare
-                // identifier (`{ [k]: v }`) and project as
-                // `parent[typeof k]`. Static identifiers and string
-                // literals stay as plain `Key` segments. Other
-                // computed-key shapes (string literal in brackets,
-                // computed expressions like `[a + 1]`) fall through
-                // with no segment pushed — leaf inherits parent path.
+                // Round-11 #5 / Round-12 #6: handle computed-key
+                // forms.
+                //   - bare-ident `{ [k]: v }`    → KeyTypeof(k)
+                //     (project as `parent[typeof k]`)
+                //   - string-literal `{ ['id']: v }` → Key('id')
+                //     (literal known at synth time, equivalent to
+                //     static)
+                //   - other computed (`[a + 1]`) → no segment;
+                //     leaf inherits parent path
                 let pushed_seg = if prop.computed {
-                    if let oxc_ast::ast::PropertyKey::Identifier(id) = &prop.key {
-                        Some(DestructureSeg::KeyTypeof(SmolStr::from(id.name.as_str())))
-                    } else {
-                        None
+                    match &prop.key {
+                        oxc_ast::ast::PropertyKey::Identifier(id) => Some(
+                            DestructureSeg::KeyTypeof(SmolStr::from(id.name.as_str())),
+                        ),
+                        oxc_ast::ast::PropertyKey::StringLiteral(s) => {
+                            Some(DestructureSeg::Key(SmolStr::from(s.value.as_str())))
+                        }
+                        _ => None,
                     }
                 } else {
                     match &prop.key {

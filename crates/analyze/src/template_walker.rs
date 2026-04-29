@@ -1366,9 +1366,20 @@ fn project_destructure_path(
                     // properties. Type stays as parent.)
                     continue;
                 }
+                // Round-12 #6: each sibling renders as either a
+                // string-literal type (static keys) or `typeof <ident>`
+                // (bare-ident computed keys). The union goes into
+                // `Omit<parent, …>`'s second arg.
                 let union = siblings
                     .iter()
-                    .map(|s| format!("{:?}", s.as_str()))
+                    .map(|s| match s {
+                        crate::template_scope::ObjectRestSibling::Static(name) => {
+                            format!("{:?}", name.as_str())
+                        }
+                        crate::template_scope::ObjectRestSibling::Typeof(name) => {
+                            format!("typeof {}", name.as_str())
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join(" | ");
                 current = format!("Omit<{current}, {union}>");

@@ -1,0 +1,11 @@
+{
+    "errors": [
+        {
+            "file": "Consumer.svelte",
+            "line": 26,
+            "column": 22,
+            "code": 2339
+        }
+    ],
+    "_note": "Round-12 follow-up #6: extends round-11 #5's computed-key destructure handling. (1) String-literal computed keys `['id']` resolve as plain `Key` segments (literal known at synth time, equivalent to static). (2) Bare-ident computed keys `[k]` are now included in ObjectRest's siblings list as `Typeof(k)`, rendered as `typeof k` in the rest's `Omit<…>` exclusion union. Pre-fix native dropped string-literal computed keys (no segment pushed → leaf inherited parent path) AND excluded bare-ident computed keys from sibling tracking, so `rest` projection wrongly retained slots that were destructured out. Producer here exposes `idAlias: Row['id']` (= number), `keyed: Row[typeof k]` (= number | string), and `rest: Omit<Row, 'id' | typeof k>` (which TS evaluates to `Omit<Row, 'id' | 'label'>` = `{ extra: boolean }`). Consumer's typed calls all pass; `rest.id` correctly fires TS2339 (`Property 'id' does not exist`)."
+}
