@@ -319,6 +319,11 @@ fn emit_document_with_render_name(
     // call `has_strict_events_decl`.
     let has_strict_events_decl =
         svelte4::compat::has_strict_events_ast(parsed_instance.as_ref(), parsed_module.as_ref());
+    // SlotHandler PLAN Stage 5: instance-script-only `$$Slots`
+    // detection. When the user declared `interface $$Slots` or
+    // `type $$Slots`, the render-fn return uses that as the slots
+    // surface; the synthesised slot-defs are ignored.
+    let has_strict_slots_decl = svelte4::compat::has_strict_slots_ast(parsed_instance.as_ref());
 
     // Single analyze-time resolution of every Props decision emit
     // makes downstream — type text, type root name, destructure
@@ -1118,6 +1123,7 @@ fn emit_document_with_render_name(
         &props_info,
         &summary.slot_defs,
         has_strict_events_decl,
+        has_strict_slots_decl,
     );
 
     buf.push_str("}\n");

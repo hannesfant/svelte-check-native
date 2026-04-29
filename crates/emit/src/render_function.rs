@@ -112,6 +112,7 @@ pub(crate) fn emit_render_body_return(
     props_info: &svn_analyze::PropsInfo,
     slot_defs: &[svn_analyze::SlotDef],
     has_strict_events_decl: bool,
+    has_strict_slots_decl: bool,
 ) {
     // JS overlay: always emit a return so the default-export's
     // `Awaited<ReturnType<typeof $$render>>['props']` extraction
@@ -221,6 +222,19 @@ pub(crate) fn emit_render_body_return(
     // buffer at its splice site — see [`write_slots_field_type`] for
     // shape. Single-line output, so bypassing EmitBuffer's line
     // tracker via `raw_string_mut()` is safe.
+    // SlotHandler PLAN Stage 5: when the user declared `interface
+    // $$Slots` / `type $$Slots` in the instance script, their
+    // declaration is authoritative — emit `undefined as any as
+    // $$Slots` instead of the synthesised slot-defs (mirrors
+    // upstream's `uses$$SlotsInterface` behavior at
+    // `createRenderFunction.ts:125-133`).
+    let write_slots_field = |out: &mut String| {
+        if has_strict_slots_decl {
+            out.push_str("undefined as any as $$Slots");
+        } else {
+            write_slots_field_type(out, doc.source, slot_defs);
+        }
+    };
     if generics.is_some() {
         let Some(ty) = prop_type_source else {
             return;
@@ -229,7 +243,7 @@ pub(crate) fn emit_render_body_return(
             buf,
             "    return {{ props: undefined as any as ({ty}), events: undefined as any as {events_field}, slots: ",
         );
-        write_slots_field_type(buf.raw_string_mut(), doc.source, slot_defs);
+        write_slots_field(buf.raw_string_mut());
         let _ = writeln!(
             buf,
             ", bindings: undefined as any as string, exports: undefined as any as ({exports_field}) }};",
@@ -255,7 +269,7 @@ pub(crate) fn emit_render_body_return(
         buf,
         "    return {{ props: undefined as any as ({props_ty}), events: undefined as any as {events_field}, slots: ",
     );
-    write_slots_field_type(buf.raw_string_mut(), doc.source, slot_defs);
+    write_slots_field(buf.raw_string_mut());
     let _ = writeln!(
         buf,
         ", bindings: undefined as any as string, exports: undefined as any as ({exports_field}) }};",

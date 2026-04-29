@@ -419,13 +419,39 @@ pub(crate) fn has_strict_events_ast(
 /// declaration (including the `export interface` / `export type`
 /// re-exporting forms). Used by [`has_strict_events_ast`].
 fn statement_declares_events(stmt: &oxc_ast::ast::Statement<'_>) -> bool {
+    statement_declares_named_type(stmt, "$$Events")
+}
+
+/// SlotHandler PLAN Stage 5: detect an `interface $$Slots` /
+/// `type $$Slots` declaration in the instance script via AST. When
+/// present, the render-fn return's `slots:` field uses `$$Slots`
+/// instead of the synthesised slot-defs (mirrors upstream's
+/// `uses$$SlotsInterface` flag in `createRenderFunction.ts:125`).
+///
+/// Module-script declarations don't count — upstream's
+/// `processModuleScriptTag.ts:127` rejects `$$Slots` there. Same
+/// rule we apply for `$$Events`.
+pub(crate) fn has_strict_slots_ast(
+    parsed_instance: Option<&svn_parser::ParsedScript<'_>>,
+) -> bool {
+    parsed_instance.is_some_and(|p| {
+        p.program
+            .body
+            .iter()
+            .any(|s| statement_declares_named_type(s, "$$Slots"))
+    })
+}
+
+/// Generic helper: true when `stmt` is an `interface NAME` or
+/// `type NAME` declaration (with or without `export`).
+fn statement_declares_named_type(stmt: &oxc_ast::ast::Statement<'_>, name: &str) -> bool {
     use oxc_ast::ast::{Declaration, Statement};
     match stmt {
-        Statement::TSInterfaceDeclaration(d) => d.id.name.as_str() == "$$Events",
-        Statement::TSTypeAliasDeclaration(d) => d.id.name.as_str() == "$$Events",
+        Statement::TSInterfaceDeclaration(d) => d.id.name.as_str() == name,
+        Statement::TSTypeAliasDeclaration(d) => d.id.name.as_str() == name,
         Statement::ExportNamedDeclaration(e) => match &e.declaration {
-            Some(Declaration::TSInterfaceDeclaration(d)) => d.id.name.as_str() == "$$Events",
-            Some(Declaration::TSTypeAliasDeclaration(d)) => d.id.name.as_str() == "$$Events",
+            Some(Declaration::TSInterfaceDeclaration(d)) => d.id.name.as_str() == name,
+            Some(Declaration::TSTypeAliasDeclaration(d)) => d.id.name.as_str() == name,
             _ => false,
         },
         _ => false,

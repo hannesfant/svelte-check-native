@@ -1,0 +1,11 @@
+{
+    "errors": [
+        {
+            "file": "Parent.svelte",
+            "line": 12,
+            "column": 23,
+            "code": 2345
+        }
+    ],
+    "_note": "PLAN design/slot_handler/PLAN.md Stage 5: when the instance script declares `interface $$Slots` / `type $$Slots`, the render-fn return uses that as the slots surface — synthesised slot-defs are ignored. Mirrors upstream `createRenderFunction.ts:125-133` `uses$$SlotsInterface` behavior. Pre-Stage-5 native always emitted the synthesised slot-def from `<slot label=\"hi\">` (which would type `label` as the literal `\"hi\"` string), overriding the user's declared `interface $$Slots { default: { label: string } }`. Post-Stage-5 the declaration wins: `label` types as `string`, and the consumer's `takesNumber(label)` call (declared `(n: number)`) fires TS2345 against the declared `string` type. New helper `has_strict_slots_ast` walks parsed_instance only — module-script `$$Slots` doesn't count, mirroring the same rule applied for `$$Events`."
+}
