@@ -749,7 +749,10 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
                             Some(path) => project_destructure_path(&element_ty, path),
                             None => element_ty,
                         };
-                        Some(ResolvedSlotExpr::Type(projected))
+                        Some(ResolvedSlotExpr::Type(apply_default_narrow(
+                            projected,
+                            b.has_default,
+                        )))
                     } else {
                         None
                     };
@@ -774,7 +777,7 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
                             Some(path) => project_destructure_path(&unwrapped, path),
                             None => unwrapped,
                         };
-                        ResolvedSlotExpr::Type(projected)
+                        ResolvedSlotExpr::Type(apply_default_narrow(projected, b.has_default))
                     });
                     self.shadow.entries.push((b.name.clone(), resolved));
                 }
@@ -842,8 +845,10 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
                             root = info.component_root.as_str(),
                             slot = info.slot_name.as_str(),
                         );
-                        Some(ResolvedSlotExpr::Type(project_destructure_path(
-                            &root_expr, path,
+                        let projected = project_destructure_path(&root_expr, path);
+                        Some(ResolvedSlotExpr::Type(apply_default_narrow(
+                            projected,
+                            b.has_default,
                         )))
                     });
                     self.shadow.entries.push((b.name.clone(), resolved));
@@ -1341,6 +1346,22 @@ fn collect_slot_def(
 /// root binding is shadowed by an active template-scope let/each
 /// binding — bare-identifier check alone misses member-access /
 /// optional-chain / index-access shapes.
+/// Round-12 follow-up #2: when a destructure leaf carries a default
+/// (`{ a = 1 }`), wrap the projected type in `Exclude<…, undefined>`.
+/// At the value level, the default kicks in only when the source's
+/// slice is undefined; the destructured local then has the source's
+/// type minus undefined (plus possibly the default's type, which we
+/// don't track). This matches the most common case where the source
+/// type already includes `| undefined` (optional prop) and the
+/// default supplies a concrete fallback of the same type.
+fn apply_default_narrow(projected: String, has_default: bool) -> String {
+    if has_default {
+        format!("Exclude<{projected}, undefined>")
+    } else {
+        projected
+    }
+}
+
 /// Round-7 follow-up #3 / Round-9 #4: project a `root` expression
 /// down a destructure-segment chain. `Key` segments append bracket
 /// access (`["name"]`); `ObjectRest` segments wrap the running

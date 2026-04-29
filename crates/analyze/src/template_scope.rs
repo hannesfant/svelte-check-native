@@ -89,6 +89,16 @@ pub struct BoundIdent {
     /// `None` for bare-identifier patterns (no destructure path
     /// needed) and for non-each/await/catch scopes.
     pub destructure_path: Option<Vec<DestructureSeg>>,
+    /// Round-12 follow-up #2: `true` if this binding sits directly
+    /// under an AssignmentPattern (`{ a = 1 }`'s `a`,
+    /// `{:then v = 0}`'s `v`, etc.). The resolver wraps the
+    /// projected type in `Exclude<…, undefined>` so the default
+    /// narrows the optional slice — mirrors upstream's IIFE
+    /// `(({ a = 1 }) => a)(source)` which TS narrows natively.
+    /// Doesn't represent the FALLBACK expression's type; if the
+    /// source slot is `string | undefined`, the binding ends up as
+    /// `string` (the default's type contribution is dropped).
+    pub has_default: bool,
 }
 
 /// Segment of a destructure projection chain. Each segment maps to a
@@ -202,6 +212,7 @@ fn walk(
                 inside_rest,
                 slot_key_path: None,
                 destructure_path,
+                has_default: false,
             });
         }
         BindingPattern::ObjectPattern(op) => {
@@ -324,7 +335,18 @@ fn walk(
             // default in PARENT scope (refs resolve to outer
             // bindings), so we just emit its range and let the caller
             // decide.
+            //
+            // Round-12 follow-up #2: track which leaves were
+            // produced by THIS AssignmentPattern's left side so the
+            // resolver can wrap each in `Exclude<…, undefined>`.
+            // We mark only leaves added during this walk (record
+            // bindings.len() before/after and flip has_default on
+            // the new entries).
+            let before_len = out.bindings.len();
             walk(&asn.left, offset, inside_rest, path, out);
+            for b in out.bindings.iter_mut().skip(before_len) {
+                b.has_default = true;
+            }
             let right_span = asn.right.span();
             let start = (right_span.start as i32 + offset).max(0) as u32;
             let end = (right_span.end as i32 + offset).max(0) as u32;
@@ -851,6 +873,7 @@ fn collect_let_directive_bindings(
                             inside_rest: false,
                             slot_key_path: Some(directive_path.clone()),
                             destructure_path: None,
+                            has_default: false,
                         },
                         &mut out,
                         &mut seen,
@@ -907,6 +930,7 @@ fn collect_let_directive_bindings(
                     inside_rest: false,
                     slot_key_path: Some(directive_path),
                     destructure_path: None,
+                    has_default: false,
                 },
                 &mut out,
                 &mut seen,
