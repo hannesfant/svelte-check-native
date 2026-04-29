@@ -63,7 +63,7 @@ pub use template_refs::find_template_refs;
 pub use template_walker::{
     BindThisCheck, BindThisTarget, BubbledComponentEvent, BubbledDomEvent, BubbledDomEventScope,
     ComponentInstantiation, DomBinding, DomBindingExpression, OnEventDirective, PropShape,
-    SlotAttrExpr, SlotDef, TemplateSummary, literal_attr_value, resolve_bind_value_type,
-    walk_template,
+    ResolvedSlotExpr, SlotAttr, SlotAttrExpr, SlotDef, TemplateSummary, literal_attr_value,
+    resolve_bind_value_type, walk_template,
 };
 pub use void_refs::VoidRefRegistry;

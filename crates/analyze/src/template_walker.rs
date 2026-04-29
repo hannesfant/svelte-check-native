@@ -237,6 +237,28 @@ pub enum SlotAttrExpr {
     /// emits as a TS string literal in the slot-def. Mirrors
     /// upstream svelte2tsx's `SlotHandler` literal-attr branch.
     Literal(String),
+    /// Resolved expression — analyze rewrote the user's
+    /// scope-shadowed identifier to a scope-independent form (e.g.
+    /// `(typeof items extends Iterable<infer __svn_T> ? __svn_T : never)`
+    /// for an `{#each items as item}` reference). Two flavors:
+    ///   - `Value(s)` → emit splices `(s)` — for value expressions.
+    ///   - `Type(s)` → emit splices `undefined as any as (s)` — for
+    ///     type assertions where no value lives in scope.
+    /// Stage 2 of the SlotHandler port — the each/await resolver
+    /// uses this for bindings that don't need the upstream
+    /// `__svn_instanceOf` shim. Let-forwarded bindings (Stage 4)
+    /// will use `Value(__svn_instanceOf(C).$$slot_def[…].name)`.
+    Resolved(ResolvedSlotExpr),
+}
+
+/// Output form of a resolved slot-attr expression — see the
+/// `Resolved` variant of [`SlotAttrExpr`].
+#[derive(Debug, Clone)]
+pub enum ResolvedSlotExpr {
+    /// A real value expression. Emit writes `(s)`.
+    Value(String),
+    /// A type assertion. Emit writes `undefined as any as (s)`.
+    Type(String),
 }
 
 /// One `<slot [name="X"] [attr1={expr1}] [attr2]>` site captured for
@@ -245,13 +267,28 @@ pub enum SlotAttrExpr {
 pub struct SlotDef {
     /// Slot name from `name="X"`; `"default"` when omitted.
     pub slot_name: SmolStr,
-    /// `(attribute_name, expression_source)` pairs. Expressions
-    /// that the walker identified as scope-shadowed (referencing
-    /// a let-bound or each-bound name in the active scope) are
-    /// omitted from this list — those need the full SlotHandler
-    /// resolver to emit correctly and would otherwise resolve to
-    /// the wrong module-scope declaration.
-    pub attrs: Vec<(SmolStr, SlotAttrExpr)>,
+    /// Slot attributes in walk order. Attrs whose leading identifier
+    /// is shadowed AND can't be resolved through the active scope
+    /// (no upstream-equivalent rewrite available) are omitted —
+    /// emitting them at module scope would resolve to the wrong
+    /// declaration, and a value-fallback would propagate `any`
+    /// silently. Stage 2+ of the SlotHandler port progressively
+    /// reduces what gets dropped.
+    pub attrs: Vec<SlotAttr>,
+}
+
+/// One `<slot>` attribute — either a named prop or a spread.
+#[derive(Debug, Clone)]
+pub enum SlotAttr {
+    /// `name={expr}` / `{name}` / `name="lit"` / a resolved attr.
+    Prop {
+        name: SmolStr,
+        expr: SlotAttrExpr,
+    },
+    /// `{...expr}` — spread of an object's properties. Stage 3 of
+    /// the SlotHandler port wires this through; for now nothing
+    /// produces it (`collect_slot_def` skips spreads).
+    Spread { expr: SlotAttrExpr },
 }
 
 /// One `use:NAME={PARAMS}` directive site. Populated by the template
@@ -871,7 +908,7 @@ fn collect_slot_def(
 ) {
     use svn_parser::{AttrValuePart, Attribute as A};
     let mut slot_name = SmolStr::new("default");
-    let mut entries: Vec<(SmolStr, SlotAttrExpr)> = Vec::new();
+    let mut entries: Vec<SlotAttr> = Vec::new();
     for attr in attrs {
         match attr {
             A::Plain(p) if p.name.as_str() == "name" => {
@@ -895,7 +932,10 @@ fn collect_slot_def(
                     && v.parts.len() == 1
                     && let AttrValuePart::Text { content, .. } = &v.parts[0]
                 {
-                    entries.push((p.name.clone(), SlotAttrExpr::Literal(content.to_string())));
+                    entries.push(SlotAttr::Prop {
+                        name: p.name.clone(),
+                        expr: SlotAttrExpr::Literal(content.to_string()),
+                    });
                 }
             }
             A::Expression(e) => {
@@ -913,18 +953,27 @@ fn collect_slot_def(
                 // any of those that root in a let/each binding would
                 // otherwise be emitted from module scope and resolve
                 // to the wrong (outer) declaration.
+                //
+                // Stage 2 follow-up will swap this skip for an actual
+                // resolution via the resolver stack.
                 if let Some(head) = leading_identifier(trimmed)
                     && shadow.contains(head)
                 {
                     continue;
                 }
-                entries.push((e.name.clone(), SlotAttrExpr::Range(e.expression_range)));
+                entries.push(SlotAttr::Prop {
+                    name: e.name.clone(),
+                    expr: SlotAttrExpr::Range(e.expression_range),
+                });
             }
             A::Shorthand(s) => {
                 if shadow.contains(s.name.as_str()) {
                     continue;
                 }
-                entries.push((s.name.clone(), SlotAttrExpr::Shorthand(s.name.clone())));
+                entries.push(SlotAttr::Prop {
+                    name: s.name.clone(),
+                    expr: SlotAttrExpr::Shorthand(s.name.clone()),
+                });
             }
             // Plain literal attrs on `<slot>` (other than `name=`)
             // are unusual; skip them for now. Spread, directives:

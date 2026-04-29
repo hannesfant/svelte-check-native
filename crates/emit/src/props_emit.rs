@@ -296,50 +296,94 @@ pub(crate) fn write_slots_field_type(
         out.push_str(def.slot_name.as_str());
         out.push_str("': { ");
         let mut first_attr = true;
-        for (name, expr) in &def.attrs {
+        for attr in &def.attrs {
             if !first_attr {
                 out.push_str(", ");
             }
             first_attr = false;
-            out.push_str(name.as_str());
-            out.push_str(": (");
-            match expr {
-                // Range form — slice the original source. A `get`
-                // miss means the caller passed a source the walker
-                // didn't see; fall through with empty parens to
-                // preserve the output shape.
-                svn_analyze::SlotAttrExpr::Range(range) => {
-                    if let Some(text) =
-                        source.get(range.start as usize..range.end as usize)
-                    {
-                        out.push_str(text);
-                    }
+            match attr {
+                svn_analyze::SlotAttr::Prop { name, expr } => {
+                    out.push_str(name.as_str());
+                    out.push_str(": ");
+                    write_slot_attr_expr(out, source, expr);
                 }
-                // Shorthand stored the identifier inline.
-                svn_analyze::SlotAttrExpr::Shorthand(ident) => {
-                    out.push_str(ident.as_str());
-                }
-                // Literal text from `<slot foo="bar">` — emit as a
-                // double-quoted TS string. Escape `"` and `\` so the
-                // emitted token-stream parses cleanly even when the
-                // user's literal contains them.
-                svn_analyze::SlotAttrExpr::Literal(text) => {
-                    out.push('"');
-                    for ch in text.chars() {
-                        match ch {
-                            '\\' => out.push_str("\\\\"),
-                            '"' => out.push_str("\\\""),
-                            '\n' => out.push_str("\\n"),
-                            '\r' => out.push_str("\\r"),
-                            _ => out.push(ch),
-                        }
-                    }
-                    out.push('"');
+                svn_analyze::SlotAttr::Spread { expr } => {
+                    // Stage 3 of the SlotHandler port wires this
+                    // through. Today nothing produces Spread (the
+                    // walker skips spreads), but the shape is here
+                    // ready for it.
+                    out.push_str("...(");
+                    write_slot_attr_expr_inner(out, source, expr);
+                    out.push(')');
                 }
             }
-            out.push(')');
         }
         out.push_str(" }");
     }
     out.push_str(" }");
+}
+
+/// Write a slot-attr expression value with the outer parens / cast
+/// shape per its variant: `Resolved::Type` becomes `undefined as any
+/// as (T)`; everything else is wrapped in `(…)`.
+fn write_slot_attr_expr(out: &mut String, source: &str, expr: &svn_analyze::SlotAttrExpr) {
+    if let svn_analyze::SlotAttrExpr::Resolved(svn_analyze::ResolvedSlotExpr::Type(t)) = expr {
+        out.push_str("undefined as any as (");
+        out.push_str(t);
+        out.push(')');
+        return;
+    }
+    out.push('(');
+    write_slot_attr_expr_inner(out, source, expr);
+    out.push(')');
+}
+
+fn write_slot_attr_expr_inner(
+    out: &mut String,
+    source: &str,
+    expr: &svn_analyze::SlotAttrExpr,
+) {
+    match expr {
+        // Range form — slice the original source. A `get`
+        // miss means the caller passed a source the walker
+        // didn't see; fall through with empty parens to
+        // preserve the output shape.
+        svn_analyze::SlotAttrExpr::Range(range) => {
+            if let Some(text) = source.get(range.start as usize..range.end as usize) {
+                out.push_str(text);
+            }
+        }
+        // Shorthand stored the identifier inline.
+        svn_analyze::SlotAttrExpr::Shorthand(ident) => {
+            out.push_str(ident.as_str());
+        }
+        // Literal text from `<slot foo="bar">` — emit as a
+        // double-quoted TS string. Escape `"` and `\` so the
+        // emitted token-stream parses cleanly even when the
+        // user's literal contains them.
+        svn_analyze::SlotAttrExpr::Literal(text) => {
+            out.push('"');
+            for ch in text.chars() {
+                match ch {
+                    '\\' => out.push_str("\\\\"),
+                    '"' => out.push_str("\\\""),
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    _ => out.push(ch),
+                }
+            }
+            out.push('"');
+        }
+        svn_analyze::SlotAttrExpr::Resolved(svn_analyze::ResolvedSlotExpr::Value(v)) => {
+            out.push_str(v);
+        }
+        svn_analyze::SlotAttrExpr::Resolved(svn_analyze::ResolvedSlotExpr::Type(_)) => {
+            // Type-form already handled by the outer
+            // `write_slot_attr_expr` paren-cast wrapper. Reaching
+            // this arm only happens for Spread { expr: Type(...) }
+            // which is an error shape — defensively splice the
+            // inner type without a paren cast (the caller's `(...)`
+            // around `...(...)` keeps it syntactically valid).
+        }
+    }
 }
