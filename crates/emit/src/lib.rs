@@ -517,12 +517,17 @@ fn emit_document_with_render_name(
     // `HTMLElementEventMap[NAME]` and intersect into the final
     // `$$Events` alias below.
     //
-    // Gated on the same `narrow_events && !has_strict_events_decl`
-    // window as the dispatcher synth: when the user already declared
-    // `interface $$Events`, their declaration is authoritative and we
-    // don't synthesise. When neither runes / strictEvents / interface
-    // is in play, we stay lax (matches upstream's behavior for
-    // unopted-in components).
+    // Reviewer follow-up #1 (round 4) removed the `narrow_events`
+    // gate from this synth: bubbled DOM events are now collected
+    // unconditionally and intersected into `events_alias_body`.
+    // Non-strict mode still gets a usable surface because the
+    // alias-composition step intersects with
+    // `{ [evt: string]: CustomEvent<any> }` (mirrors upstream's
+    // `__sveltets_2_with_any_event`) so unknown names still pass
+    // while the bubbled-DOM names carry their proper DOM event
+    // type. The only skip remaining: when the user declared
+    // `interface $$Events`, their declaration is authoritative
+    // and we don't synthesise.
     //
     // Dedup names — `<button on:click><img on:click />` would
     // otherwise emit two `"click"` keys in the projection. Keys in a
