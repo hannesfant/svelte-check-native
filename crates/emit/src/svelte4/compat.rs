@@ -394,13 +394,25 @@ pub(crate) fn fragment_contains_slot(fragment: &svn_parser::Fragment) -> bool {
 /// blind to comments / strings / unrelated identifiers.
 pub(crate) fn has_strict_events_ast(
     parsed_instance: Option<&svn_parser::ParsedScript<'_>>,
-    parsed_module: Option<&svn_parser::ParsedScript<'_>>,
+    _parsed_module: Option<&svn_parser::ParsedScript<'_>>,
 ) -> bool {
+    // Reviewer follow-up #5 (round 4): pre-fix this also scanned
+    // the module script. Upstream svelte2tsx
+    // (`processModuleScriptTag.ts:119`) explicitly REJECTS a
+    // `$$Events` declaration in `<script module>` — only the
+    // instance script's declaration is the strict-event opt-in.
+    // Recognizing the module-script form would silently widen
+    // the event surface based on a declaration upstream wouldn't
+    // allow.
+    //
+    // We don't currently surface a diagnostic for the
+    // module-script case (lint-level concern, deferred). Ignore
+    // the module-script declaration so the rest of the pipeline
+    // behaves as if `$$Events` is absent.
     let scan = |program: &oxc_ast::ast::Program<'_>| -> bool {
         program.body.iter().any(statement_declares_events)
     };
     parsed_instance.is_some_and(|p| scan(&p.program))
-        || parsed_module.is_some_and(|p| scan(&p.program))
 }
 
 /// True when `stmt` is an `interface $$Events` or `type $$Events`
