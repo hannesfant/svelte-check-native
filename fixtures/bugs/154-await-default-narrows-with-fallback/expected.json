@@ -1,0 +1,11 @@
+{
+    "errors": [
+        {
+            "file": "Consumer.svelte",
+            "line": 16,
+            "column": 17,
+            "code": 2345
+        }
+    ],
+    "_note": "Round-13 follow-up #4: destructure default's expression-type gets unioned into the projected leaf. Pre-fix native only emitted `Exclude<…, undefined>`; for sources where the slot is fully optional the narrow gave `never` (e.g. `{:then v = 0}` where awaited value's slice is just `undefined`). Upstream's IIFE `(({a = 0}) => a)(source)` types the local as `<source-minus-undefined> | <fallback-type>`. Native now mirrors via `default_typeof_expr` which extracts the literal/identifier/typeof-safe-call type from the default's source slice and unions it into the projected leaf via `apply_default_narrow`. Producer here exposes `value: Exclude<Awaited<typeof promise>['value'], undefined> | 42` = `number`. Consumer's `takesNumber(value)` passes; the swapped `takesString(value)` correctly fires TS2345. Pre-fix the binding might have collapsed to `never` and every call would have failed (or worse, accepted via the never-types-everything trap)."
+}

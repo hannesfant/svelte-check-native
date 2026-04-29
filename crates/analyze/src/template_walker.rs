@@ -762,9 +762,15 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
                             Some(path) => project_destructure_path(&element_ty, path),
                             None => element_ty,
                         };
+                        let default_t = b.default_value_range.and_then(|r| {
+                            self.source
+                                .get(r.start as usize..r.end as usize)
+                                .and_then(default_typeof_expr)
+                        });
                         Some(ResolvedSlotExpr::Type(apply_default_narrow(
                             projected,
                             b.has_default,
+                            default_t,
                         )))
                     } else {
                         None
@@ -799,7 +805,16 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
                             Some(path) => project_destructure_path(&unwrapped, path),
                             None => unwrapped,
                         };
-                        ResolvedSlotExpr::Type(apply_default_narrow(projected, b.has_default))
+                        let default_t = b.default_value_range.and_then(|r| {
+                            self.source
+                                .get(r.start as usize..r.end as usize)
+                                .and_then(default_typeof_expr)
+                        });
+                        ResolvedSlotExpr::Type(apply_default_narrow(
+                            projected,
+                            b.has_default,
+                            default_t,
+                        ))
                     });
                     self.shadow.entries.push((b.name.clone(), resolved));
                 }
@@ -868,9 +883,15 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
                             slot = info.slot_name.as_str(),
                         );
                         let projected = project_destructure_path(&root_expr, path);
+                        let default_t = b.default_value_range.and_then(|r| {
+                            self.source
+                                .get(r.start as usize..r.end as usize)
+                                .and_then(default_typeof_expr)
+                        });
                         Some(ResolvedSlotExpr::Type(apply_default_narrow(
                             projected,
                             b.has_default,
+                            default_t,
                         )))
                     });
                     self.shadow.entries.push((b.name.clone(), resolved));
@@ -1454,16 +1475,63 @@ fn find_balanced_call_open(s: &str) -> Option<usize> {
 /// (`{ a = 1 }`), wrap the projected type in `Exclude<…, undefined>`.
 /// At the value level, the default kicks in only when the source's
 /// slice is undefined; the destructured local then has the source's
-/// type minus undefined (plus possibly the default's type, which we
-/// don't track). This matches the most common case where the source
-/// type already includes `| undefined` (optional prop) and the
-/// default supplies a concrete fallback of the same type.
-fn apply_default_narrow(projected: String, has_default: bool) -> String {
-    if has_default {
-        format!("Exclude<{projected}, undefined>")
-    } else {
-        projected
+/// type minus undefined PLUS the default's type. Round-13 #4 unions
+/// the default's typeof-derived type when extractable from a
+/// literal/identifier/dotted-chain/typeof-safe-call source — common
+/// cases like `{ a = 1 }` (default type `1`) or `{:then v = 0}`
+/// (default type `0`) so the binding type matches upstream's IIFE
+/// narrowing even when the source itself can't supply the fallback.
+fn apply_default_narrow(
+    projected: String,
+    has_default: bool,
+    default_typeof: Option<String>,
+) -> String {
+    if !has_default {
+        return projected;
     }
+    let excluded = format!("Exclude<{projected}, undefined>");
+    match default_typeof {
+        Some(t) => format!("({excluded} | {t})"),
+        None => excluded,
+    }
+}
+
+/// Round-13 #4: derive a TS type expression from a default-value
+/// source slice. Recognised shapes (extends round-12 #1's
+/// `items_typeof_expr` with literal handling):
+///
+/// - string literal (`'fallback'` / `"x"` / `` `tpl` ``) → the
+///   literal type itself.
+/// - boolean / null / undefined / numeric literal → the literal type.
+/// - bare identifier / dotted chain                → `typeof X`.
+/// - typeof-safe call                              → `ReturnType<typeof <callee>>`.
+/// - anything else                                 → `None` (caller
+///   falls back to `Exclude<…, undefined>` only).
+fn default_typeof_expr(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Literal-type passthroughs. These are valid TS types as-is
+    // (`'fallback'` is the string-literal type, `1` is the numeric-
+    // literal type, etc.).
+    if trimmed.starts_with('"') || trimmed.starts_with('\'') || trimmed.starts_with('`') {
+        return Some(trimmed.to_string());
+    }
+    if trimmed == "true" || trimmed == "false" || trimmed == "null" || trimmed == "undefined" {
+        return Some(trimmed.to_string());
+    }
+    if trimmed.parse::<f64>().is_ok() {
+        return Some(trimmed.to_string());
+    }
+    // Identifier/call shapes — reuse the items_typeof helper.
+    let candidate = items_typeof_expr(trimmed);
+    if candidate == "any" {
+        // Helper's fallback. We'd rather skip the union than widen
+        // the projected leaf to `any` via the default's contribution.
+        return None;
+    }
+    Some(candidate)
 }
 
 /// Round-7 follow-up #3 / Round-9 #4: project a `root` expression
