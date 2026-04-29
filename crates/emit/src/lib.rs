@@ -301,12 +301,16 @@ fn emit_document_with_render_name(
     // false-fire on comments / unused imports / string literals
     // containing the name. Mirrors upstream's `events.hasEvents()`
     // gate. See `has_event_dispatcher_call` in svn-analyze.
+    // Reviewer follow-up #3 (round 5): scan only the instance
+    // script. Upstream svelte2tsx's `processModuleScriptTag.ts:69`
+    // does NOT feed `<script module>` declarations into
+    // `ComponentEvents`, so a module-only `createEventDispatcher()`
+    // shouldn't disqualify the Svelte 5 fn-component shape or
+    // attach the `__svn_events` marker. Pre-fix the OR over
+    // `parsed_module` did exactly that.
     let has_dispatcher_call = parsed_instance
         .as_ref()
-        .is_some_and(|p| svn_analyze::has_event_dispatcher_call(&p.program))
-        || parsed_module
-            .as_ref()
-            .is_some_and(|p| svn_analyze::has_event_dispatcher_call(&p.program));
+        .is_some_and(|p| svn_analyze::has_event_dispatcher_call(&p.program));
     // Reviewer follow-up #3a: AST-based `$$Events` detection
     // replaces the substring scan that false-fired on comments and
     // string literals AND missed `type $$Events=…` (no trailing
