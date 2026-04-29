@@ -78,6 +78,16 @@ pub struct BoundIdent {
     ///   to carry the destructure's property path (`["foo", "a"]` for
     ///   `let:foo={{a}}`).
     pub slot_key_path: Option<Vec<SmolStr>>,
+    /// Round-7 follow-up #3: for bindings declared by a destructure
+    /// pattern in `{#each items as PATTERN}` or `{:then PATTERN}`,
+    /// this carries the property-access path INSIDE the iterated /
+    /// awaited value down to the leaf binding.
+    ///
+    /// Path segments are property names for object patterns and
+    /// numeric strings for array-pattern indices (`["0"]` for
+    /// `[a, b]`'s first element). `None` for bare-identifier patterns
+    /// (no destructure path needed) and for non-each/await scopes.
+    pub destructure_path: Option<Vec<SmolStr>>,
 }
 
 /// Output of [`collect_pattern_bindings`]. Bindings are emitted in
@@ -111,43 +121,84 @@ pub struct PatternBindings {
 /// `[..., ...rest]`).
 pub fn collect_pattern_bindings(pat: &BindingPattern<'_>, offset: i32) -> PatternBindings {
     let mut out = PatternBindings::default();
-    walk(pat, offset, false, &mut out);
+    let mut path: Vec<SmolStr> = Vec::new();
+    walk(pat, offset, false, &mut path, &mut out);
     out
 }
 
-fn walk(pat: &BindingPattern<'_>, offset: i32, inside_rest: bool, out: &mut PatternBindings) {
+fn walk(
+    pat: &BindingPattern<'_>,
+    offset: i32,
+    inside_rest: bool,
+    // Round-7 follow-up #3: property-access path from the pattern
+    // root down to the current node, for typed projection of
+    // each-block / await-block destructure leaves. Object property
+    // names land in path; array-pattern indices land as numeric
+    // strings (`"0"`, `"1"`, …). Non-each consumers ignore this.
+    path: &mut Vec<SmolStr>,
+    out: &mut PatternBindings,
+) {
     match pat {
         BindingPattern::BindingIdentifier(id) => {
             let start = (id.span.start as i32 + offset).max(0) as u32;
             let end = (id.span.end as i32 + offset).max(0) as u32;
+            let destructure_path = if path.is_empty() {
+                None
+            } else {
+                Some(path.clone())
+            };
             out.bindings.push(BoundIdent {
                 name: SmolStr::from(id.name.as_str()),
                 range: Range::new(start, end),
                 inside_rest,
                 slot_key_path: None,
+                destructure_path,
             });
         }
         BindingPattern::ObjectPattern(op) => {
             for prop in &op.properties {
-                walk(&prop.value, offset, inside_rest, out);
+                let key_name = match &prop.key {
+                    oxc_ast::ast::PropertyKey::StaticIdentifier(id) => {
+                        Some(SmolStr::from(id.name.as_str()))
+                    }
+                    oxc_ast::ast::PropertyKey::StringLiteral(s) => {
+                        Some(SmolStr::from(s.value.as_str()))
+                    }
+                    _ => None,
+                };
+                let pushed = match key_name {
+                    Some(name) => {
+                        path.push(name);
+                        true
+                    }
+                    None => false,
+                };
+                walk(&prop.value, offset, inside_rest, path, out);
+                if pushed {
+                    path.pop();
+                }
             }
             // Object-rest (`{ ...rest }`) — lint flags this for
             // `bind_invalid_each_rest`; analyze just needs the name
             // for shadow tracking. Either way, the inside-rest flag
             // propagates to anything inside.
             if let Some(rest) = &op.rest {
-                walk(&rest.argument, offset, true, out);
+                walk(&rest.argument, offset, true, path, out);
             }
         }
         BindingPattern::ArrayPattern(ap) => {
-            for elem in ap.elements.iter().flatten() {
-                walk(elem, offset, inside_rest, out);
+            for (idx, elem) in ap.elements.iter().enumerate() {
+                if let Some(elem) = elem {
+                    path.push(SmolStr::from(idx.to_string()));
+                    walk(elem, offset, inside_rest, path, out);
+                    path.pop();
+                }
             }
             // Array-rest (`[head, ...tail]`). Round-4 G9: must walk
             // here, otherwise `tail` never reaches the shadow stack
             // and template references resolve to a wrong binding.
             if let Some(rest) = &ap.rest {
-                walk(&rest.argument, offset, true, out);
+                walk(&rest.argument, offset, true, path, out);
             }
         }
         BindingPattern::AssignmentPattern(asn) => {
@@ -156,7 +207,7 @@ fn walk(pat: &BindingPattern<'_>, offset: i32, inside_rest: bool, out: &mut Patt
             // default in PARENT scope (refs resolve to outer
             // bindings), so we just emit its range and let the caller
             // decide.
-            walk(&asn.left, offset, inside_rest, out);
+            walk(&asn.left, offset, inside_rest, path, out);
             let right_span = asn.right.span();
             let start = (right_span.start as i32 + offset).max(0) as u32;
             let end = (right_span.end as i32 + offset).max(0) as u32;
@@ -682,6 +733,7 @@ fn collect_let_directive_bindings(
                             range: *range,
                             inside_rest: false,
                             slot_key_path: Some(directive_path.clone()),
+                            destructure_path: None,
                         },
                         &mut out,
                         &mut seen,
@@ -722,6 +774,7 @@ fn collect_let_directive_bindings(
                     range: *range,
                     inside_rest: false,
                     slot_key_path: Some(directive_path),
+                    destructure_path: None,
                 },
                 &mut out,
                 &mut seen,

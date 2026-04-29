@@ -731,25 +731,26 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
                         .get(r.start as usize..r.end as usize)
                         .map(|s| s.trim().to_string())
                 });
+                // Round-7 follow-up #3: destructured patterns now
+                // carry a `destructure_path` per leaf binding, so
+                // `{#each rows as { id }}` resolves `id` to the
+                // element's `['id']` slice. Mirrors upstream's
+                // `((${destructuring}) => ${id})(__sveltets_2_unwrapArr(items))`
+                // IIFE shape, but at TYPE level.
                 for (i, b) in bindings.iter().enumerate() {
                     let resolved = if has_index && i == context_count {
                         // Index — always `number`.
                         Some(ResolvedSlotExpr::Type("number".to_string()))
                     } else if let Some(items) = items_text.as_deref() {
-                        // Bare context binding only — destructured
-                        // patterns (`{#each rows as { id }}`)
-                        // produce multiple bindings whose source
-                        // doesn't match the items expression. Stage 3
-                        // will rewrite via OXC; for now leave them as
-                        // `None` (shadowed but unresolvable).
-                        if context_count == 1 {
-                            Some(ResolvedSlotExpr::Type(format!(
-                                "(typeof {items}) extends Iterable<infer __svn_T> \
-                                 ? __svn_T : never"
-                            )))
-                        } else {
-                            None
-                        }
+                        let element_ty = format!(
+                            "((typeof {items}) extends Iterable<infer __svn_T> ? __svn_T : never)"
+                        );
+                        let path_suffix = b
+                            .destructure_path
+                            .as_deref()
+                            .map(format_path_suffix)
+                            .unwrap_or_default();
+                        Some(ResolvedSlotExpr::Type(format!("{element_ty}{path_suffix}")))
                     } else {
                         None
                     };
@@ -763,17 +764,20 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
                         .get(r.start as usize..r.end as usize)
                         .map(|s| s.trim().to_string())
                 });
+                // Round-7 follow-up #3: destructured `{:then { x }}`
+                // resolves each leaf via the binding's
+                // `destructure_path`. Bare `{:then v}` keeps the
+                // unwrapped promise type directly (no path suffix).
                 for b in bindings {
-                    // Bare `{:then v}` → `Awaited<typeof p>`.
-                    // Destructured `{:then { x }}` falls to None
-                    // (Stage 3 OXC rewriter territory).
-                    let resolved = if bindings.len() == 1 {
-                        promise_text
+                    let resolved = promise_text.as_deref().map(|p| {
+                        let unwrapped = format!("(Awaited<typeof {p}>)");
+                        let path_suffix = b
+                            .destructure_path
                             .as_deref()
-                            .map(|p| ResolvedSlotExpr::Type(format!("Awaited<typeof {p}>")))
-                    } else {
-                        None
-                    };
+                            .map(format_path_suffix)
+                            .unwrap_or_default();
+                        ResolvedSlotExpr::Type(format!("{unwrapped}{path_suffix}"))
+                    });
                     self.shadow.entries.push((b.name.clone(), resolved));
                 }
             }
@@ -1285,6 +1289,22 @@ fn collect_slot_def(
 /// root binding is shadowed by an active template-scope let/each
 /// binding — bare-identifier check alone misses member-access /
 /// optional-chain / index-access shapes.
+/// Round-7 follow-up #3: render a destructure path as a chain of
+/// bracket-notation accesses, e.g. `["a"]["b"]` for path
+/// `["a", "b"]`. Numeric segments stay quoted (TS treats `obj["0"]`
+/// and `obj[0]` interchangeably for numeric-keyed access on tuples
+/// and arrays, and we only ever produce numeric segments for array
+/// patterns where this works).
+fn format_path_suffix(path: &[smol_str::SmolStr]) -> String {
+    let mut out = String::with_capacity(path.iter().map(|s| s.len() + 4).sum());
+    for seg in path {
+        out.push('[');
+        out.push_str(&format!("{:?}", seg.as_str()));
+        out.push(']');
+    }
+    out
+}
+
 fn leading_identifier(s: &str) -> Option<&str> {
     let bytes = s.as_bytes();
     let first = *bytes.first()?;

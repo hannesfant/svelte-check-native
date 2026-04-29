@@ -1,0 +1,17 @@
+{
+    "errors": [
+        {
+            "file": "Consumer.svelte",
+            "line": 20,
+            "column": 17,
+            "code": 2345
+        },
+        {
+            "file": "Consumer.svelte",
+            "line": 21,
+            "column": 17,
+            "code": 2345
+        }
+    ],
+    "_note": "Round-7 follow-up #3: pre-fix native dropped destructured each/await bindings out of the slot-attr resolver — `{#each rows as { id }}` produced multiple bindings whose `b.name == 'id'` but no source-text match for the destructure pattern, so the resolver returned None and slot attrs referencing `id`/`label` were dropped from the emitted slot literal. Consumer-side `<Producer let:id let:label>` then typed both as `any` and any field/argument check passed silently. Upstream `slot.ts:resolveDestructuringAssignment` projects each leaf as the IIFE `((${pattern}) => ${id.name})(unwrapArr(items))`, which at type level is `(elementType)['id']`. Native now mirrors that with TS bracket-notation: each BoundIdent carries a `destructure_path: Option<Vec<SmolStr>>` populated by the pattern walker (object property names + array-pattern indices); each-block resolution applies the path to the element type, await-block resolution applies the path to `Awaited<typeof p>`. Producer's slot literal here resolves to `{ id: number, label: string }`; Consumer's `takesNumber(id)` and `takesString(label)` pass; the swapped calls correctly fire TS2345."
+}
