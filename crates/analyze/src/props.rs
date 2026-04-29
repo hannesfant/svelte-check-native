@@ -564,28 +564,60 @@ pub fn find_dispatcher_event_type_sources(
 ) -> Vec<String> {
     let ctor_locals = collect_ctor_locals(program);
     let mut out = Vec::new();
+    // Round-9 follow-up #3: only count dispatchers ASSIGNED to a
+    // BindingIdentifier (`const x = createEventDispatcher<T>()`) —
+    // matches upstream's `processInstanceScriptContent.ts:271`
+    // requirement (the dispatcher must be reachable as a callable
+    // identifier for `dispatch('foo', …)` later). Bare expression
+    // statements like `createEventDispatcher<{foo: string}>();` get
+    // dropped because upstream never reaches them via
+    // `setEventDispatcher`. Walk recursively through function/block/
+    // if bodies so nested declarations land too.
     for stmt in &program.body {
-        match stmt {
-            Statement::VariableDeclaration(decl) => {
-                for d in &decl.declarations {
-                    if let Some(init) = &d.init
-                        && let Some(slice) = dispatcher_type_arg_slice(init, source, &ctor_locals)
-                    {
-                        out.push(slice);
-                    }
+        statement_collect_typed_dispatcher_slices(stmt, source, &ctor_locals, &mut out);
+    }
+    out
+}
+
+fn statement_collect_typed_dispatcher_slices(
+    stmt: &Statement<'_>,
+    source: &str,
+    ctor_locals: &std::collections::HashSet<String>,
+    out: &mut Vec<String>,
+) {
+    match stmt {
+        Statement::VariableDeclaration(decl) => {
+            for d in &decl.declarations {
+                if !matches!(&d.id, BindingPattern::BindingIdentifier(_)) {
+                    continue;
                 }
-            }
-            Statement::ExpressionStatement(expr_stmt) => {
-                if let Some(slice) =
-                    dispatcher_type_arg_slice(&expr_stmt.expression, source, &ctor_locals)
+                if let Some(init) = &d.init
+                    && let Some(slice) = dispatcher_type_arg_slice(init, source, ctor_locals)
                 {
                     out.push(slice);
                 }
             }
-            _ => {}
         }
+        Statement::FunctionDeclaration(fd) => {
+            if let Some(body) = &fd.body {
+                for s in &body.statements {
+                    statement_collect_typed_dispatcher_slices(s, source, ctor_locals, out);
+                }
+            }
+        }
+        Statement::IfStatement(s) => {
+            statement_collect_typed_dispatcher_slices(&s.consequent, source, ctor_locals, out);
+            if let Some(alt) = &s.alternate {
+                statement_collect_typed_dispatcher_slices(alt, source, ctor_locals, out);
+            }
+        }
+        Statement::BlockStatement(b) => {
+            for s in &b.body {
+                statement_collect_typed_dispatcher_slices(s, source, ctor_locals, out);
+            }
+        }
+        _ => {}
     }
-    out
 }
 
 /// Find the typed-dispatcher locals — the subset of
@@ -600,30 +632,10 @@ pub fn find_dispatcher_event_type_sources(
 pub fn find_typed_dispatcher_local_names(program: &oxc_ast::ast::Program<'_>) -> Vec<String> {
     let ctor_locals = collect_ctor_locals(program);
     let mut out = Vec::new();
+    // Round-9 follow-up #3: walk recursively through function/block/
+    // if bodies so nested declarations land too.
     for stmt in &program.body {
-        let Statement::VariableDeclaration(decl) = stmt else {
-            continue;
-        };
-        for d in &decl.declarations {
-            let Some(init) = &d.init else { continue };
-            let Expression::CallExpression(call) = init else {
-                continue;
-            };
-            let Expression::Identifier(id) = &call.callee else {
-                continue;
-            };
-            if !ctor_locals.contains(id.name.as_str()) {
-                continue;
-            }
-            // Typed only if the call carries explicit type-args.
-            if call.type_arguments.is_none() {
-                continue;
-            }
-            let BindingPattern::BindingIdentifier(bid) = &d.id else {
-                continue;
-            };
-            out.push(bid.name.to_string());
-        }
+        statement_collect_dispatcher_locals(stmt, &ctor_locals, true, &mut out);
     }
     out
 }
@@ -638,30 +650,69 @@ pub fn find_typed_dispatcher_local_names(program: &oxc_ast::ast::Program<'_>) ->
 /// event-name scan to actual dispatcher calls.
 pub fn find_dispatcher_local_names(program: &oxc_ast::ast::Program<'_>) -> Vec<String> {
     let ctor_locals = collect_ctor_locals(program);
-    // Every `const NAME = <ctor-local>(...)` binding.
+    // Round-9 follow-up #3: walk recursively (see typed-locals
+    // counterpart for the rationale). Every `const NAME =
+    // <ctor-local>(...)` binding contributes regardless of typed
+    // /untyped form.
     let mut out = Vec::new();
     for stmt in &program.body {
-        let Statement::VariableDeclaration(decl) = stmt else {
-            continue;
-        };
-        for d in &decl.declarations {
-            let Some(init) = &d.init else { continue };
-            let Expression::CallExpression(call) = init else {
-                continue;
-            };
-            let Expression::Identifier(id) = &call.callee else {
-                continue;
-            };
-            if !ctor_locals.contains(id.name.as_str()) {
-                continue;
-            }
-            let BindingPattern::BindingIdentifier(bid) = &d.id else {
-                continue;
-            };
-            out.push(bid.name.to_string());
-        }
+        statement_collect_dispatcher_locals(stmt, &ctor_locals, false, &mut out);
     }
     out
+}
+
+/// Walk a statement tree and collect `BindingIdentifier`s whose init
+/// is a `<ctor-local>(...)` dispatcher call. When `typed_only` is
+/// true, only collect declarators whose call has an explicit
+/// `<T>` type argument.
+fn statement_collect_dispatcher_locals(
+    stmt: &Statement<'_>,
+    ctor_locals: &std::collections::HashSet<String>,
+    typed_only: bool,
+    out: &mut Vec<String>,
+) {
+    match stmt {
+        Statement::VariableDeclaration(decl) => {
+            for d in &decl.declarations {
+                let Some(init) = &d.init else { continue };
+                let Expression::CallExpression(call) = init else {
+                    continue;
+                };
+                let Expression::Identifier(id) = &call.callee else {
+                    continue;
+                };
+                if !ctor_locals.contains(id.name.as_str()) {
+                    continue;
+                }
+                if typed_only && call.type_arguments.is_none() {
+                    continue;
+                }
+                let BindingPattern::BindingIdentifier(bid) = &d.id else {
+                    continue;
+                };
+                out.push(bid.name.to_string());
+            }
+        }
+        Statement::FunctionDeclaration(fd) => {
+            if let Some(body) = &fd.body {
+                for s in &body.statements {
+                    statement_collect_dispatcher_locals(s, ctor_locals, typed_only, out);
+                }
+            }
+        }
+        Statement::IfStatement(s) => {
+            statement_collect_dispatcher_locals(&s.consequent, ctor_locals, typed_only, out);
+            if let Some(alt) = &s.alternate {
+                statement_collect_dispatcher_locals(alt, ctor_locals, typed_only, out);
+            }
+        }
+        Statement::BlockStatement(b) => {
+            for s in &b.body {
+                statement_collect_dispatcher_locals(s, ctor_locals, typed_only, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Collect the set of locals that resolve to svelte's
