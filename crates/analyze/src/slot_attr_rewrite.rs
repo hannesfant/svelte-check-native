@@ -709,7 +709,42 @@ fn walk_statement_for_value_rewrite(
         Statement::ThrowStatement(t) => {
             walk_value_expr(&t.argument, lookup, shadowed, edits, bail, false);
         }
-        _ => {}
+        // Round-Parity #4b: enumerate every remaining Statement
+        // variant explicitly so the compiler enforces a decision when
+        // oxc adds new ones — same discipline #4a applied to
+        // collect_function_body_stmts. Pre-fix `_ => {}` would
+        // silently swallow new node kinds and the slot-attr rewriter
+        // would miss any shadow-relevant content they hold.
+        //
+        // Pure-control-flow statements with no expressions to walk
+        // and no bindings to push:
+        Statement::BreakStatement(_)
+        | Statement::ContinueStatement(_)
+        | Statement::DebuggerStatement(_)
+        | Statement::EmptyStatement(_) => {}
+        // Class declarations introduce their own scope (we don't
+        // descend into method bodies for slot-attr rewriting — same
+        // policy as walk_value_expr's ClassExpression arm).
+        Statement::ClassDeclaration(_) => {}
+        // Type-only declarations: no runtime bindings, no shadows.
+        Statement::TSTypeAliasDeclaration(_)
+        | Statement::TSInterfaceDeclaration(_)
+        | Statement::TSEnumDeclaration(_)
+        | Statement::TSModuleDeclaration(_)
+        | Statement::TSGlobalDeclaration(_)
+        | Statement::TSImportEqualsDeclaration(_) => {}
+        // Module-boundary statements: only appear at the program
+        // top level, never inside callback bodies the slot-attr
+        // walker recurses through. Treat as no-op for safety.
+        Statement::ImportDeclaration(_)
+        | Statement::ExportAllDeclaration(_)
+        | Statement::ExportDefaultDeclaration(_)
+        | Statement::ExportNamedDeclaration(_)
+        | Statement::TSExportAssignment(_)
+        | Statement::TSNamespaceExportDeclaration(_) => {}
+        // `with` is deprecated; its dynamic-scope semantics aren't
+        // modelled by our shadow stack. Treat as opaque.
+        Statement::WithStatement(_) => {}
     }
 }
 
@@ -815,7 +850,40 @@ fn collect_hoisted_in_stmt(stmt: &oxc_ast::ast::Statement<'_>, shadowed: &mut Ve
             }
         }
         Statement::LabeledStatement(s) => collect_hoisted_in_stmt(&s.body, shadowed),
-        _ => {}
+        // Round-Parity #4b: enumerate the remaining Statement
+        // variants explicitly. None of these introduce a hoistable
+        // `var` or `FunctionDeclaration` into the enclosing function
+        // scope — the cases that DO are handled above. Listing them
+        // forces a compile error when oxc adds a new variant so the
+        // hoisting pass can't silently miss new shadow-introducing
+        // forms.
+        Statement::BreakStatement(_)
+        | Statement::ContinueStatement(_)
+        | Statement::DebuggerStatement(_)
+        | Statement::EmptyStatement(_)
+        | Statement::ExpressionStatement(_)
+        | Statement::ReturnStatement(_)
+        | Statement::ThrowStatement(_) => {}
+        Statement::ClassDeclaration(_) => {
+            // Class declarations create a binding for the class
+            // name, but our shadow stack doesn't currently model
+            // class-shadowing of template locals. If a future
+            // fixture surfaces this as a real bug, push the class
+            // name here.
+        }
+        Statement::TSTypeAliasDeclaration(_)
+        | Statement::TSInterfaceDeclaration(_)
+        | Statement::TSEnumDeclaration(_)
+        | Statement::TSModuleDeclaration(_)
+        | Statement::TSGlobalDeclaration(_)
+        | Statement::TSImportEqualsDeclaration(_) => {}
+        Statement::ImportDeclaration(_)
+        | Statement::ExportAllDeclaration(_)
+        | Statement::ExportDefaultDeclaration(_)
+        | Statement::ExportNamedDeclaration(_)
+        | Statement::TSExportAssignment(_)
+        | Statement::TSNamespaceExportDeclaration(_) => {}
+        Statement::WithStatement(_) => {}
     }
 }
 

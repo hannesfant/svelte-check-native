@@ -35,10 +35,13 @@ const SHARED_TSCONFIG = path.join(FIXTURES_DIR, 'tsconfig.json');
 const CHILD_ENV = { ...process.env, CLAUDECODE: '', GEMINI_CLI: '', CODEX_CI: '' };
 
 // Fixtures the upstream root tsconfig explicitly excludes — these run with
-// project-specific harness setup we don't replicate. Mirror the exclude
-// set 1:1.
+// project-specific harness setup we don't replicate. Round-Parity #2:
+// `svelte-native` was previously here, but its expectations file is empty
+// (`[]`) and our binary produces no `input.svelte` diagnostics for it, so
+// it passes strict matching trivially. Removed — kept node16 and
+// project-reference because their special module-resolution / project-
+// references harnesses aren't yet replicated.
 const UPSTREAM_EXCLUDED = new Set([
-    'svelte-native',
     'node16',
     'project-reference',
 ]);
@@ -69,10 +72,16 @@ const UPSTREAM_EXCLUDED = new Set([
 //     `svelte` package installed; upstream's LS resolves the module via
 //     the in-process svelte-language-server importPackage path. Whole-
 //     workspace mode would need a synthetic install.
+//
+//   bucket=position-drift: same (file, code) MULTISET but column /
+//     line drifts because our overlay's reverse mapping lands the
+//     diagnostic on a different anchor than upstream's. Surfaced
+//     when R-Parity #1 switched the default match from (file, code)
+//     to (file, line, character, code). Resolves when the overlay's
+//     line/col anchor converges with upstream's.
 const SKIP_LIST = {
     // Upstream-excluded — see UPSTREAM_EXCLUDED above; recorded here too
     // so the printed scoreboard surfaces them.
-    'svelte-native': 'upstream-root tsconfig excludes — special harness setup',
     'node16': 'upstream-root tsconfig excludes — node16 module-resolution mode',
     'project-reference': 'upstream-root tsconfig excludes — project-references mode',
 
@@ -125,6 +134,11 @@ const SKIP_LIST = {
     'style-directive': 'overlay-counts: 2345 missing',
     'svelte-element': 'overlay-counts: 2353 missing, 2322/2741/7006 extra',
     'transition-options': 'overlay-counts: extra 2554',
+
+    // bucket=position-drift (surfaced by R-Parity #1's strict-position match)
+    '$store-bind': 'position-drift: 2322 column anchor 11 vs upstream 16 on bind: sites (×2)',
+    'modulescript-boolean-not-assignable-to-string': 'position-drift: 2322 column 6 (decl) vs upstream 41 (operand) at line 0',
+    'script-boolean-not-assignable-to-string': 'position-drift: 2322 column 6 (decl) vs upstream 24 (operand) at line 0',
 };
 
 let passed = 0;
@@ -141,15 +155,24 @@ function diagnosticCodeKey(d) {
     return `${d.file} [${d.code}]`;
 }
 
-// Multiset compare keyed by `(file, code)` only. Our overlay layout
-// differs from svelte2tsx's (`__svn_*` vs `__sveltets_2_*`, and the
-// component-instantiation shape uses `__svn_ensure_component` wrappers
-// where upstream uses `__sveltets_2_componentType`), so source-level
-// line/col after reverse-mapping doesn't align byte-for-byte. Comparing
-// the multiset of `(file, code)` confirms we fire the right categories
-// of error in the right files even when overlay-driven positions drift.
-// Strict position parity is a future workstream tracked under
-// STRICT_LS_DIAGNOSTICS.
+// Round-Parity #1: default match is now `(file, line, character,
+// code)` — STRICT position parity, matching the plan in
+// notes/PARITY_TESTING_PLAN.md. Pre-fix the suite compared
+// `(file, code)` only; the printed PASS line meant "we fired the
+// right categories of error in the right files" but said nothing
+// about line/character drift. A position regression could land
+// silently as long as the (file, code) multiset stayed unchanged.
+//
+// Fixtures whose positions don't yet match upstream's reverse-
+// mapped output are added to SKIP_LIST with a `bucket=position-drift`
+// reason. Those entries are now visible work, not invisible
+// passes.
+//
+// LOOSE mode (LS_DIAGNOSTICS_LOOSE=1) keeps the legacy `(file,
+// code)` comparison for cases where the local environment can't
+// reach byte-perfect positions yet (CI cold-cache scenarios, etc.).
+const LOOSE = process.env.LS_DIAGNOSTICS_LOOSE === '1';
+const compareKey = LOOSE ? diagnosticCodeKey : diagnosticKey;
 function makeMultiset(list, keyFn) {
     const map = new Map();
     for (const d of list) {
@@ -270,20 +293,31 @@ function runBinary(fixtureDir) {
     return { diagnostics };
 }
 
+// Round-Parity #2: collect "stale skip" entries — fixtures listed
+// in SKIP_LIST or UPSTREAM_EXCLUDED that actually pass strict
+// matching today. They become drift the same way bench.mjs's stale
+// allowlist entries do (R-Parity #3): a SKIP entry whose underlying
+// divergence got fixed must be removed, otherwise the next reviewer
+// thinks the fixture still needs work.
+const staleSkips = [];
+
 function runFixture(name, fixtureDir) {
-    if (name in SKIP_LIST) {
-        skipped++;
-        skipReasons.push(`  SKIP: ${name} — ${SKIP_LIST[name]}`);
-        return;
-    }
-    if (UPSTREAM_EXCLUDED.has(name)) {
-        skipped++;
-        skipReasons.push(`  SKIP: ${name} — upstream-root tsconfig excludes it`);
-        return;
-    }
+    const userSkipped = name in SKIP_LIST || UPSTREAM_EXCLUDED.has(name);
 
     const expected = loadExpected(fixtureDir);
     if (!expected) {
+        if (userSkipped) {
+            // No expectations file is its own kind of skip — record
+            // under the shared "skipped" bucket without flagging the
+            // SKIP_LIST entry as stale.
+            skipped++;
+            skipReasons.push(`  SKIP: ${name} — ${
+                name in SKIP_LIST
+                    ? SKIP_LIST[name]
+                    : 'upstream-root tsconfig excludes it'
+            }`);
+            return;
+        }
         skipped++;
         skipReasons.push(`  SKIP: ${name} — no expectedv2.json / expected_svelte_5.json`);
         return;
@@ -294,6 +328,28 @@ function runFixture(name, fixtureDir) {
         return;
     }
 
+    if (userSkipped) {
+        // Run the fixture anyway so we can detect stale skips.
+        // Keep the slot in the SKIP bucket for the scoreboard, but
+        // if we find a clean match we'll flag it as drift.
+        const { diagnostics, crash } = runBinary(fixtureDir);
+        if (!crash) {
+            const expMs = makeMultiset(expected.list, compareKey);
+            const actMs = makeMultiset(diagnostics, compareKey);
+            const { missing, extra } = diffMultisets(expMs, actMs);
+            if (missing.length === 0 && extra.length === 0) {
+                staleSkips.push(name);
+            }
+        }
+        skipped++;
+        skipReasons.push(`  SKIP: ${name} — ${
+            name in SKIP_LIST
+                ? SKIP_LIST[name]
+                : 'upstream-root tsconfig excludes it'
+        }`);
+        return;
+    }
+
     const { diagnostics, crash } = runBinary(fixtureDir);
     if (crash) {
         failed++;
@@ -301,10 +357,11 @@ function runFixture(name, fixtureDir) {
         return;
     }
 
-    // Lossy compare: multiset of (file, code) — see diffMultisets above
-    // for rationale. Strict position parity gets a separate STRICT mode.
-    const expMs = makeMultiset(expected.list, diagnosticCodeKey);
-    const actMs = makeMultiset(diagnostics, diagnosticCodeKey);
+    // Round-Parity #1: default-strict on `(file, line, character,
+    // code)`. `LS_DIAGNOSTICS_LOOSE=1` falls back to the legacy
+    // `(file, code)` multiset comparison.
+    const expMs = makeMultiset(expected.list, compareKey);
+    const actMs = makeMultiset(diagnostics, compareKey);
     const { missing, extra } = diffMultisets(expMs, actMs);
 
     if (missing.length === 0 && extra.length === 0) {
@@ -347,7 +404,23 @@ if (failureReasons.length) {
     console.log('\nfailures:');
     for (const block of failureReasons) console.log(block);
 }
+
+// Round-Parity #2: stale skips count as failures. A SKIP_LIST entry
+// (or UPSTREAM_EXCLUDED member) whose fixture now matches expected
+// strictly must be removed from the list — otherwise the scoreboard
+// shows an artificial work item that's already been done. Same
+// discipline as bench.mjs's stale-allowlist treatment in #3.
+let stalePenalty = 0;
+if (staleSkips.length) {
+    console.log('\nstale skips (now passing — remove from SKIP_LIST / UPSTREAM_EXCLUDED):');
+    for (const name of staleSkips) {
+        console.log(`  STALE: ${name}`);
+    }
+    stalePenalty = staleSkips.length;
+}
+
 console.log(
-    `\n${passed} passed, ${failed} failed${skipped ? `, ${skipped} skipped` : ''}`
+    `\n${passed} passed, ${failed + stalePenalty} failed${skipped ? `, ${skipped} skipped` : ''}` +
+    (stalePenalty ? ` (incl. ${stalePenalty} stale skip${stalePenalty === 1 ? '' : 's'})` : '')
 );
-process.exit(failed > 0 ? 1 : 0);
+process.exit(failed + stalePenalty > 0 ? 1 : 0);
