@@ -162,14 +162,64 @@ fn collect_rewrite_insertions(
                     }
                 }
             }
+            // Round-14 #3: walk function-body stmts inside the
+            // for-test and for-update too, matching the analyzer's
+            // `statement_collect_typed_dispatcher_slices` and
+            // sibling walkers. An untyped dispatcher decl hidden
+            // in an IIFE in `for (init; (() => { … })(); update)`
+            // needs the typed-events rewrite or its dispatched
+            // calls go un-checked.
+            if let Some(test) = &s.test {
+                for s2 in stmts_in_function_expr(test) {
+                    collect_rewrite_insertions(s2, ctor_locals, out);
+                }
+            }
+            if let Some(update) = &s.update {
+                for s2 in stmts_in_function_expr(update) {
+                    collect_rewrite_insertions(s2, ctor_locals, out);
+                }
+            }
             collect_rewrite_insertions(&s.body, ctor_locals, out);
         }
-        Statement::ForInStatement(s) => collect_rewrite_insertions(&s.body, ctor_locals, out),
-        Statement::ForOfStatement(s) => collect_rewrite_insertions(&s.body, ctor_locals, out),
-        Statement::WhileStatement(s) => collect_rewrite_insertions(&s.body, ctor_locals, out),
-        Statement::DoWhileStatement(s) => collect_rewrite_insertions(&s.body, ctor_locals, out),
+        Statement::ForInStatement(s) => {
+            // Round-14 #3: walk the iterable expression too — an
+            // IIFE there can declare a dispatcher.
+            for s2 in stmts_in_function_expr(&s.right) {
+                collect_rewrite_insertions(s2, ctor_locals, out);
+            }
+            collect_rewrite_insertions(&s.body, ctor_locals, out);
+        }
+        Statement::ForOfStatement(s) => {
+            for s2 in stmts_in_function_expr(&s.right) {
+                collect_rewrite_insertions(s2, ctor_locals, out);
+            }
+            collect_rewrite_insertions(&s.body, ctor_locals, out);
+        }
+        Statement::WhileStatement(s) => {
+            // Round-14 #3: walk the loop test too.
+            for s2 in stmts_in_function_expr(&s.test) {
+                collect_rewrite_insertions(s2, ctor_locals, out);
+            }
+            collect_rewrite_insertions(&s.body, ctor_locals, out);
+        }
+        Statement::DoWhileStatement(s) => {
+            collect_rewrite_insertions(&s.body, ctor_locals, out);
+            for s2 in stmts_in_function_expr(&s.test) {
+                collect_rewrite_insertions(s2, ctor_locals, out);
+            }
+        }
         Statement::SwitchStatement(s) => {
+            // Round-14 #3: walk the switch discriminant and each
+            // case's test expression.
+            for s2 in stmts_in_function_expr(&s.discriminant) {
+                collect_rewrite_insertions(s2, ctor_locals, out);
+            }
             for case in &s.cases {
+                if let Some(test) = &case.test {
+                    for s2 in stmts_in_function_expr(test) {
+                        collect_rewrite_insertions(s2, ctor_locals, out);
+                    }
+                }
                 for stmt in &case.consequent {
                     collect_rewrite_insertions(stmt, ctor_locals, out);
                 }

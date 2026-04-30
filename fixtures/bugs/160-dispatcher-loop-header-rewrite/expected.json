@@ -1,0 +1,11 @@
+{
+    "errors": [
+        {
+            "file": "Inner.svelte",
+            "line": 29,
+            "column": 28,
+            "code": 2353
+        }
+    ],
+    "_note": "Round-14 follow-up #3: `dispatcher_typing_rewrite::collect_rewrite_insertions` walked for-init and every loop/switch BODY but skipped the loop/switch HEADERS. The analyzer's `statement_collect_typed_dispatcher_slices` (round-12 #4 / round-13 #6) handles all of: ForStatement.test/update, ForInStatement.right, ForOfStatement.right, WhileStatement.test, DoWhileStatement.test, SwitchStatement.discriminant, and SwitchCase.test. Post-fix the rewrite walker descends into the same set via `stmts_in_function_expr`, so an untyped dispatcher decl hidden in an IIFE used as e.g. a `while`-test condition reaches the typed-events splice. Inner here puts a dispatcher decl + dispatch call inside a `while`-test IIFE and dispatches the `$$Events`-declared `save` event with `{wrong: 'shape'}` — post-fix the rewrite makes detail `{id: number}` and the wrong shape correctly fires TS2353. Pre-fix the call ran with lax `<{}>` inference and accepted any second arg silently."
+}
