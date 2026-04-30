@@ -24,7 +24,7 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{BindingPattern, Expression, Statement};
-use svn_analyze::collect_function_body_stmts;
+use svn_analyze::{WalkNode, walk_statement_descend};
 use svn_parser::{ScriptLang, parse_script_body};
 
 /// Walk top-level `const X = createEventDispatcher()` declarators and
@@ -43,14 +43,44 @@ pub fn rewrite(content: &str, lang: ScriptLang) -> String {
     }
 
     let mut insertions: Vec<(usize, &'static str)> = Vec::new();
-    // Round-13 follow-up #2: walk recursively so nested untyped
-    // dispatchers (inside function bodies, control-flow blocks,
-    // callback args) also get the typed-events rewrite. Pre-fix
-    // only top-level VariableDeclarations were rewritten;
-    // `function f() { const d = createEventDispatcher() }`'s `d`
-    // dispatched calls then bypassed the typed-events check.
+    // Walk recursively so nested untyped dispatchers (inside function
+    // bodies, control-flow blocks, callback args, for-init slots)
+    // also get the typed-events rewrite. Driven by walk_statement_
+    // descend — the closure pattern-matches on WalkNode::{Statement(
+    // VariableDeclaration | ExportNamedDeclaration), ForInitVarDecl}
+    // and records each untyped call's callee.span.end byte position.
+    let handle_var_decl = |decl: &oxc_ast::ast::VariableDeclaration<'_>,
+                           out: &mut Vec<(usize, &'static str)>| {
+        for declarator in &decl.declarations {
+            if !matches!(&declarator.id, BindingPattern::BindingIdentifier(_)) {
+                continue;
+            }
+            let Some(init) = &declarator.init else {
+                continue;
+            };
+            if let Expression::CallExpression(call) = init
+                && let Expression::Identifier(callee_id) = &call.callee
+                && ctor_locals.iter().any(|n| n == callee_id.name.as_str())
+                && call.type_arguments.is_none()
+            {
+                out.push((callee_id.span.end as usize, "<__SvnCustomEvents<$$Events>>"));
+            }
+        }
+    };
     for stmt in &parsed.program.body {
-        collect_rewrite_insertions(stmt, &ctor_locals, &mut insertions);
+        walk_statement_descend(stmt, &mut |node| match node {
+            WalkNode::Statement(Statement::VariableDeclaration(decl)) => {
+                handle_var_decl(decl, &mut insertions);
+            }
+            WalkNode::Statement(Statement::ExportNamedDeclaration(ed)) => {
+                if let Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) = &ed.declaration
+                {
+                    handle_var_decl(decl, &mut insertions);
+                }
+            }
+            WalkNode::ForInitVarDecl(decl) => handle_var_decl(decl, &mut insertions),
+            _ => {}
+        });
     }
 
     if insertions.is_empty() {
@@ -63,222 +93,6 @@ pub fn rewrite(content: &str, lang: ScriptLang) -> String {
     for (pos, text) in insertions {
         out.insert_str(pos, text);
     }
-    out
-}
-
-/// Round-13 #2-rewrite: walk a statement and collect the byte
-/// position of every untyped `<ctor-local>()` call's callee end.
-/// Recurses through Function/Block/If/For/While/Switch/Try/
-/// LabeledStatement bodies + arrow/function expression bodies
-/// attached as VarDecl initializers / IIFE wrappers / call-arg
-/// callbacks. Mirrors the dispatcher walkers in
-/// `crates/analyze/src/props.rs`.
-/// Round-15 #1: shared body for the rewrite walker's
-/// `Statement::VariableDeclaration` /
-/// `ExportNamedDeclaration(Declaration::VariableDeclaration)` arms.
-fn collect_rewrite_insertions_from_var_decl(
-    decl: &oxc_ast::ast::VariableDeclaration<'_>,
-    ctor_locals: &[String],
-    out: &mut Vec<(usize, &'static str)>,
-) {
-    for declarator in &decl.declarations {
-        if !matches!(&declarator.id, BindingPattern::BindingIdentifier(_)) {
-            continue;
-        }
-        let Some(init) = &declarator.init else {
-            continue;
-        };
-        if let Expression::CallExpression(call) = init
-            && let Expression::Identifier(callee_id) = &call.callee
-            && ctor_locals.iter().any(|n| n == callee_id.name.as_str())
-            && call.type_arguments.is_none()
-        {
-            out.push((callee_id.span.end as usize, "<__SvnCustomEvents<$$Events>>"));
-        }
-        for s in stmts_in_function_expr(init) {
-            collect_rewrite_insertions(s, ctor_locals, out);
-        }
-    }
-}
-
-fn collect_rewrite_insertions(
-    stmt: &Statement<'_>,
-    ctor_locals: &[String],
-    out: &mut Vec<(usize, &'static str)>,
-) {
-    match stmt {
-        Statement::VariableDeclaration(decl) => {
-            collect_rewrite_insertions_from_var_decl(decl, ctor_locals, out);
-        }
-        Statement::FunctionDeclaration(fd) => {
-            if let Some(body) = &fd.body {
-                for s in &body.statements {
-                    collect_rewrite_insertions(s, ctor_locals, out);
-                }
-            }
-        }
-        // Round-15 #1: `export const x = createEventDispatcher(...)` /
-        // `export function ...` — walk the inner decl identically to
-        // the bare form.
-        Statement::ExportNamedDeclaration(ed) => match &ed.declaration {
-            Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) => {
-                collect_rewrite_insertions_from_var_decl(decl, ctor_locals, out);
-            }
-            Some(oxc_ast::ast::Declaration::FunctionDeclaration(fd)) => {
-                if let Some(body) = &fd.body {
-                    for s in &body.statements {
-                        collect_rewrite_insertions(s, ctor_locals, out);
-                    }
-                }
-            }
-            _ => {}
-        },
-        Statement::IfStatement(s) => {
-            // Round-14 #1: walk function-body stmts inside the if-test
-            // expression too. An untyped dispatcher decl hidden in an
-            // IIFE used as the test condition needs the typed-events
-            // rewrite or its `dispatch(...)` calls go un-checked.
-            for s2 in stmts_in_function_expr(&s.test) {
-                collect_rewrite_insertions(s2, ctor_locals, out);
-            }
-            collect_rewrite_insertions(&s.consequent, ctor_locals, out);
-            if let Some(alt) = &s.alternate {
-                collect_rewrite_insertions(alt, ctor_locals, out);
-            }
-        }
-        Statement::BlockStatement(b) => {
-            for s in &b.body {
-                collect_rewrite_insertions(s, ctor_locals, out);
-            }
-        }
-        Statement::ExpressionStatement(es) => {
-            for s in stmts_in_function_expr(&es.expression) {
-                collect_rewrite_insertions(s, ctor_locals, out);
-            }
-        }
-        Statement::ForStatement(s) => {
-            if let Some(init) = &s.init {
-                use oxc_ast::ast::ForStatementInit;
-                match init {
-                    ForStatementInit::VariableDeclaration(decl) => {
-                        for d in &decl.declarations {
-                            if !matches!(&d.id, BindingPattern::BindingIdentifier(_)) {
-                                continue;
-                            }
-                            let Some(d_init) = &d.init else { continue };
-                            if let Expression::CallExpression(call) = d_init
-                                && let Expression::Identifier(callee_id) = &call.callee
-                                && ctor_locals.iter().any(|n| n == callee_id.name.as_str())
-                                && call.type_arguments.is_none()
-                            {
-                                out.push((
-                                    callee_id.span.end as usize,
-                                    "<__SvnCustomEvents<$$Events>>",
-                                ));
-                            }
-                            for s2 in stmts_in_function_expr(d_init) {
-                                collect_rewrite_insertions(s2, ctor_locals, out);
-                            }
-                        }
-                    }
-                    other => {
-                        if let Some(expr) = other.as_expression() {
-                            for s2 in stmts_in_function_expr(expr) {
-                                collect_rewrite_insertions(s2, ctor_locals, out);
-                            }
-                        }
-                    }
-                }
-            }
-            // Round-14 #3: walk function-body stmts inside the
-            // for-test and for-update too, matching the analyzer's
-            // `statement_collect_typed_dispatcher_slices` and
-            // sibling walkers. An untyped dispatcher decl hidden
-            // in an IIFE in `for (init; (() => { … })(); update)`
-            // needs the typed-events rewrite or its dispatched
-            // calls go un-checked.
-            if let Some(test) = &s.test {
-                for s2 in stmts_in_function_expr(test) {
-                    collect_rewrite_insertions(s2, ctor_locals, out);
-                }
-            }
-            if let Some(update) = &s.update {
-                for s2 in stmts_in_function_expr(update) {
-                    collect_rewrite_insertions(s2, ctor_locals, out);
-                }
-            }
-            collect_rewrite_insertions(&s.body, ctor_locals, out);
-        }
-        Statement::ForInStatement(s) => {
-            // Round-14 #3: walk the iterable expression too — an
-            // IIFE there can declare a dispatcher.
-            for s2 in stmts_in_function_expr(&s.right) {
-                collect_rewrite_insertions(s2, ctor_locals, out);
-            }
-            collect_rewrite_insertions(&s.body, ctor_locals, out);
-        }
-        Statement::ForOfStatement(s) => {
-            for s2 in stmts_in_function_expr(&s.right) {
-                collect_rewrite_insertions(s2, ctor_locals, out);
-            }
-            collect_rewrite_insertions(&s.body, ctor_locals, out);
-        }
-        Statement::WhileStatement(s) => {
-            // Round-14 #3: walk the loop test too.
-            for s2 in stmts_in_function_expr(&s.test) {
-                collect_rewrite_insertions(s2, ctor_locals, out);
-            }
-            collect_rewrite_insertions(&s.body, ctor_locals, out);
-        }
-        Statement::DoWhileStatement(s) => {
-            collect_rewrite_insertions(&s.body, ctor_locals, out);
-            for s2 in stmts_in_function_expr(&s.test) {
-                collect_rewrite_insertions(s2, ctor_locals, out);
-            }
-        }
-        Statement::SwitchStatement(s) => {
-            // Round-14 #3: walk the switch discriminant and each
-            // case's test expression.
-            for s2 in stmts_in_function_expr(&s.discriminant) {
-                collect_rewrite_insertions(s2, ctor_locals, out);
-            }
-            for case in &s.cases {
-                if let Some(test) = &case.test {
-                    for s2 in stmts_in_function_expr(test) {
-                        collect_rewrite_insertions(s2, ctor_locals, out);
-                    }
-                }
-                for stmt in &case.consequent {
-                    collect_rewrite_insertions(stmt, ctor_locals, out);
-                }
-            }
-        }
-        Statement::TryStatement(s) => {
-            for stmt in &s.block.body {
-                collect_rewrite_insertions(stmt, ctor_locals, out);
-            }
-            if let Some(handler) = &s.handler {
-                for stmt in &handler.body.body {
-                    collect_rewrite_insertions(stmt, ctor_locals, out);
-                }
-            }
-            if let Some(finalizer) = &s.finalizer {
-                for stmt in &finalizer.body {
-                    collect_rewrite_insertions(stmt, ctor_locals, out);
-                }
-            }
-        }
-        Statement::LabeledStatement(s) => collect_rewrite_insertions(&s.body, ctor_locals, out),
-        _ => {}
-    }
-}
-
-/// Yield the body statements of nested function/arrow expressions
-/// (including IIFE-wrapped + callback-arg shapes). Mirrors
-/// `props.rs::statements_inside_function_expr`.
-fn stmts_in_function_expr<'a, 'b>(expr: &'a Expression<'b>) -> Vec<&'a Statement<'b>> {
-    let mut out = Vec::new();
-    collect_function_body_stmts(expr, &mut out);
     out
 }
 
