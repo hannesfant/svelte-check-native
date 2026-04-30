@@ -160,9 +160,15 @@ fn upstream_validator_fixtures() {
     let mut total = 0usize;
     let mut enforced = 0usize;
     let mut passing = 0usize;
-    let mut skipped = 0usize;
     let mut failures: Vec<String> = Vec::new();
     let mut uncovered: BTreeSet<String> = BTreeSet::new();
+    // Skip reasons broken out so the scoreboard reports the long-tail
+    // bucket each skip falls in. Treat each bucket as an explicit
+    // backlog item — module-mode samples ride on Phase C JS-pass,
+    // compileOption-gated ones ride on a future filter surface, etc.
+    let mut skipped_module_mode: Vec<String> = Vec::new();
+    let mut skipped_compile_options: Vec<String> = Vec::new();
+    let mut skipped_unported_code: Vec<String> = Vec::new();
 
     for entry in fs::read_dir(&dir).unwrap() {
         let sample = entry.unwrap();
@@ -177,12 +183,17 @@ fn upstream_validator_fixtures() {
 
         total += 1;
 
+        let fixture_name = sample_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
         let source_path = if sample_path.join("input.svelte").is_file() {
             sample_path.join("input.svelte")
         } else if sample_path.join("input.svelte.js").is_file() {
             // Module-only source — Phase A can't lint these yet (JS AST
             // pass lands Phase C). Skip for now.
-            skipped += 1;
+            skipped_module_mode.push(fixture_name);
             continue;
         } else {
             continue;
@@ -203,7 +214,7 @@ fn upstream_validator_fixtures() {
                 || cfg.contains("customElement")
                 || cfg.contains("immutable"))
         {
-            skipped += 1;
+            skipped_compile_options.push(fixture_name);
             continue;
         }
 
@@ -218,7 +229,7 @@ fn upstream_validator_fixtures() {
         // Gate: only enforce if every expected code is in PORTED_CODES.
         let all_ported = expected.iter().all(|w| ported.contains(w.code.as_str()));
         if !all_ported {
-            skipped += 1;
+            skipped_unported_code.push(fixture_name);
             for w in &expected {
                 if !ported.contains(w.code.as_str()) {
                     uncovered.insert(w.code.clone());
@@ -265,11 +276,44 @@ fn upstream_validator_fixtures() {
         }
     }
 
+    let total_skipped = skipped_module_mode.len()
+        + skipped_compile_options.len()
+        + skipped_unported_code.len();
     eprintln!("upstream validator fixtures:");
     eprintln!("  total with warnings.json: {total}");
     eprintln!("  enforced (all codes ported): {enforced}");
     eprintln!("  passing: {passing}");
-    eprintln!("  skipped (unported code in fixture): {skipped}");
+    eprintln!("  skipped (total): {total_skipped}");
+    eprintln!("    - module-only (input.svelte.js): {}", skipped_module_mode.len());
+    eprintln!(
+        "    - compile-option-gated (_config.js): {}",
+        skipped_compile_options.len()
+    );
+    eprintln!(
+        "    - unported code in expected output: {}",
+        skipped_unported_code.len()
+    );
+    if !skipped_module_mode.is_empty() {
+        let mut names = skipped_module_mode.clone();
+        names.sort();
+        eprintln!("      module-only fixtures:\n        {}", names.join("\n        "));
+    }
+    if !skipped_compile_options.is_empty() {
+        let mut names = skipped_compile_options.clone();
+        names.sort();
+        eprintln!(
+            "      compile-option-gated fixtures:\n        {}",
+            names.join("\n        ")
+        );
+    }
+    if !skipped_unported_code.is_empty() {
+        let mut names = skipped_unported_code.clone();
+        names.sort();
+        eprintln!(
+            "      unported-code fixtures:\n        {}",
+            names.join("\n        ")
+        );
+    }
     if !uncovered.is_empty() {
         eprintln!(
             "  codes not yet ported (at least one fixture blocked):\n    {}",
