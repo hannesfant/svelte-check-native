@@ -24,6 +24,7 @@ use crate::emit_buffer::EmitBuffer;
 use crate::emit_is_ts;
 use crate::emit_template_body;
 use crate::nodes::action::emit_legacy_action_attrs;
+use crate::process_instance_script_content::ExportedLocalInfo;
 use crate::props_emit::{synthesise_js_props_typedef_body, write_slots_field_type};
 use svn_analyze::{TemplateSummary, scan_jsdoc_typedef_name, should_synthesise_js_props};
 
@@ -109,6 +110,8 @@ pub(crate) fn emit_render_body_return(
     prop_type_source: Option<&str>,
     synth_events_alias_body: Option<&str>,
     exports_object: Option<&str>,
+    export_type_infos: &[ExportedLocalInfo],
+    dollar_props_name_range: Option<svn_core::Range>,
     props_info: &svn_analyze::PropsInfo,
     slot_defs: &[svn_analyze::SlotDef],
     has_strict_events_decl: bool,
@@ -262,6 +265,39 @@ pub(crate) fn emit_render_body_return(
     // methods as required props at every consumer site (`Property
     // 'foo' is missing in type '{}' but required in type '{ foo:
     // …; }'`).
+    //
+    // Svelte-4 `interface $$Props` cross-check — mirrors upstream
+    // `ExportedNames.createPropsStr`'s `uses$$Props` branch. Spreads
+    // an empty-typed call into `__svn_ensure_right_props<{<lets>}>(
+    // __svn_any("") as $$Props)` so TS fires TS2345 when `$$Props`
+    // is wider/narrower than the declared `export let X: T` shape.
+    if matches!(props_info.source, svn_analyze::PropsSource::LegacyInterface) {
+        let lets_shape: String = build_exported_lets_shape(export_type_infos);
+        let _ = write!(
+            buf,
+            "    return {{ props: {{ ...__svn_ensure_right_props<{lets_shape}>("
+        );
+        // Anchor the cast expression to the source's `$$Props`
+        // declaration name. TS2345 fired on the type-assertion
+        // argument reverse-maps onto the interface's name span,
+        // matching upstream LS's `movePropsErrorRangeBackIfNecessary`.
+        let cast = "__svn_any(\"\") as $$Props";
+        if let Some(range) = dollar_props_name_range {
+            buf.append_with_source(cast, range);
+        } else {
+            buf.push_str(cast);
+        }
+        let _ = write!(
+            buf,
+            ") }} as $$Props, events: undefined as any as {events_field}, slots: ",
+        );
+        write_slots_field(buf.raw_string_mut());
+        let _ = writeln!(
+            buf,
+            ", bindings: undefined as any as string, exports: undefined as any as ({exports_field}) }};",
+        );
+        return;
+    }
     let props_ty: String = prop_type_source
         .map(|ty| ty.to_string())
         .unwrap_or_else(|| "Record<string, never>".to_string());
@@ -274,4 +310,51 @@ pub(crate) fn emit_render_body_return(
         buf,
         ", bindings: undefined as any as string, exports: undefined as any as ({exports_field}) }};",
     );
+}
+
+/// Build the `{ X: T, Y?: U, ... }` type literal for every `export let`
+/// declaration. Mirrors upstream svelte2tsx's
+/// `createReturnElementsType(lets)` (`ExportedNames.ts:759-784`):
+///
+/// - Only `isLet` entries participate; `export const` / `export
+///   function` go through the separate `exports` field.
+/// - Has-init → optional (`?:`); no-init → required (`:`).
+/// - Type source: declared annotation > `typeof <name>` for
+///   has-init-no-annotation > `any` for no-init-no-annotation.
+///   `typeof <name>` resolves inside the render-fn scope where the
+///   stripped-`export` `let X = …` lives, picking up the literal
+///   inferred type.
+///
+/// Returns `{}` when no `export let`s exist — the
+/// `__svn_ensure_right_props<{}>` form upstream emits for
+/// `interface $$Props` components with no `export let`s
+/// (see `ts-$$Props-interface-only-props/expectedv2.ts:14`).
+fn build_exported_lets_shape(infos: &[ExportedLocalInfo]) -> String {
+    let lets: Vec<&ExportedLocalInfo> = infos.iter().filter(|i| i.is_let).collect();
+    if lets.is_empty() {
+        return "{}".to_string();
+    }
+    let mut out = String::from("{");
+    let mut first = true;
+    for info in lets {
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        out.push_str(info.name.as_str());
+        if info.has_init {
+            out.push('?');
+        }
+        out.push_str(": ");
+        match &info.type_source {
+            Some(t) => out.push_str(t),
+            None if info.has_init => {
+                out.push_str("typeof ");
+                out.push_str(info.name.as_str());
+            }
+            None => out.push_str("any"),
+        }
+    }
+    out.push('}');
+    out
 }

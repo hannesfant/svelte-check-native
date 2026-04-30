@@ -510,6 +510,22 @@ declare const __svn_self_default: import('svelte').Component<any, any, any>;
 declare function __svn_any(x: any): any;
 
 /**
+ * `interface $$Props` cross-check shim. When the component declares a
+ * Svelte-4 `$$Props` interface AND a sibling `export let X: T`, the
+ * render fn returns its props as
+ *
+ *     { ...__svn_ensure_right_props<{ X: T; ... }>(__svn_any("") as $$Props) } as $$Props
+ *
+ * (mirrors upstream svelte2tsx's `__sveltets_2_ensureRightProps` —
+ * `svelte-shims-v4.d.ts:62`). The type-arg constraint fires TS2345
+ * when `$$Props['X']` is wider than `T` (optional vs required) or
+ * missing a let-declared name. The `: {}` return is intentionally
+ * empty so the spread leaves the surrounding `as $$Props` cast as
+ * the props' final type — no inference leak from the assertion.
+ */
+declare function __svn_ensure_right_props<Props>(props: Props): {};
+
+/**
  * Svelte 5 `bind:X={getter, setter}` helper. Mirrors upstream
  * `__sveltets_2_get_set_binding` (svelte2tsx/svelte-shims-v4.d.ts:269)
  * with the `__svn_*` prefix mandated by CLAUDE.md architecture rule #6.

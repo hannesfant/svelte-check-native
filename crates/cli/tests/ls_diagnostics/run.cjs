@@ -109,9 +109,7 @@ const SKIP_LIST = {
     'custom-types': '7006 implicit-any leak (×4) plus 2353/7044 missing — overlay differs',
 
     // bucket=overlay-positions: same code categories, different counts
-    '$$props-invalid1': 'overlay-counts: 2345 expected fires elsewhere in our overlay',
-    '$$props-invalid2': 'overlay-counts: 2345 expected fires elsewhere in our overlay',
-    '$$props-invalid3': 'overlay-counts: 2345 expected fires elsewhere in our overlay',
+    '$$props-invalid3': 'tsgo-divergence: tsgo emits inner TS2741 (missing-prop) where tsc/upstream LS emits TS2345 wrap',
     '$$slots': 'overlay-counts: 2322/2345/2353 multiset diverges',
     '$store-wrong-usage': 'overlay-counts: 2769 fires 6× upstream, 0× ours',
     'accessors-customElement-configs': 'overlay-counts: 2322 extra in our overlay',

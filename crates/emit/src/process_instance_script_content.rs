@@ -68,6 +68,19 @@ pub struct SplitScript {
 pub struct ExportedLocalInfo {
     pub name: SmolStr,
     pub type_source: Option<String>,
+    /// `true` for `export let X` (Svelte-4 prop), `false` for
+    /// `export const`, `export function`, `export class`. Mirrors
+    /// upstream svelte2tsx's `isLet` flag in `ExportedNames`. Drives
+    /// the `__svn_ensure_right_props<{...}>(... as $$Props)` lets-
+    /// shape inclusion in `render_function::emit_render_body_return`.
+    pub is_let: bool,
+    /// `true` when the declarator has an initializer
+    /// (`export let foo = 'bar'`). Drives the optional-marker
+    /// decision in the lets-shape: a let with an initializer
+    /// becomes `foo?: …`, a let without becomes `foo: …` (required).
+    /// Always `true` for `export function` / `export class` (they're
+    /// always defined at declaration site).
+    pub has_init: bool,
 }
 
 /// Split out every module-level statement (imports, exports of all
@@ -806,9 +819,12 @@ fn collect_export_type_infos(
             out.push(ExportedLocalInfo {
                 name,
                 type_source: Some(sig),
+                is_let: false,
+                has_init: true,
             });
         }
         Declaration::VariableDeclaration(v) => {
+            let is_let = matches!(v.kind, oxc_ast::ast::VariableDeclarationKind::Let);
             for d in &v.declarations {
                 // Only simple `name: T = ...` patterns — destructures
                 // and anonymous-binding cases we surface as `any`.
@@ -820,7 +836,13 @@ fn collect_export_type_infos(
                     let span = GetSpan::span(&ta.type_annotation);
                     content[span.start as usize..span.end as usize].to_string()
                 });
-                out.push(ExportedLocalInfo { name, type_source });
+                let has_init = d.init.is_some();
+                out.push(ExportedLocalInfo {
+                    name,
+                    type_source,
+                    is_let,
+                    has_init,
+                });
             }
         }
         // `export class Foo {}` — surface as `any`. Classes exported
@@ -831,6 +853,8 @@ fn collect_export_type_infos(
                 out.push(ExportedLocalInfo {
                     name: SmolStr::from(id.name.as_str()),
                     type_source: None,
+                    is_let: false,
+                    has_init: true,
                 });
             }
         }

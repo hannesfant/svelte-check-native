@@ -1274,6 +1274,33 @@ fn emit_document_with_render_name(
         &exported_locals,
     );
 
+    let export_type_infos = split
+        .as_ref()
+        .map(|s| s.export_type_infos.as_slice())
+        .unwrap_or(&[]);
+    // Locate the `interface $$Props` name span (in absolute source
+    // bytes) so emit can anchor the synthesized
+    // `__svn_ensure_right_props<…>(__svn_any("") as $$Props)` cast to
+    // it. Upstream's LS does the same remap in
+    // `DiagnosticsProvider.movePropsErrorRangeBackIfNecessary` —
+    // a TS2345 fired in synthesized return-statement bytes resolves
+    // onto the user-source interface declaration name.
+    let dollar_props_name_range: Option<svn_core::Range> = doc
+        .instance_script
+        .as_ref()
+        .zip(parsed_instance.as_ref())
+        .and_then(|(s, p)| {
+            for stmt in &p.program.body {
+                if let oxc_ast::ast::Statement::TSInterfaceDeclaration(iface) = stmt
+                    && iface.id.name == "$$Props"
+                {
+                    let span = iface.id.span;
+                    let base = s.content_range.start;
+                    return Some(svn_core::Range::new(base + span.start, base + span.end));
+                }
+            }
+            None
+        });
     emit_render_body_return(
         &mut buf,
         doc,
@@ -1281,6 +1308,8 @@ fn emit_document_with_render_name(
         prop_type_source.as_deref(),
         events_alias_body.as_deref(),
         exports_object.as_deref(),
+        export_type_infos,
+        dollar_props_name_range,
         &props_info,
         &summary.slot_defs,
         has_strict_events_decl,
