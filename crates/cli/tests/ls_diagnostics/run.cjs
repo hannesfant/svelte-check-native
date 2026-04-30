@@ -86,7 +86,6 @@ const SKIP_LIST = {
     'project-reference': 'upstream-root tsconfig excludes — project-references mode',
 
     // bucket=alt-language
-    'coffeescript-ignore': 'alt-language: <script lang="coffee"> not handled — explodes as JS parse errors',
     'pug': 'alt-language: <script lang="pug"> support gap — TS2339 leak',
 
     // bucket=missing-code

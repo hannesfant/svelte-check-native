@@ -482,7 +482,26 @@ fn build_script_section<'src>(
     errors: &mut Vec<ParseError>,
 ) -> ScriptSection<'src> {
     let context = parse_context_attr(&raw.attrs, errors);
+    let pre_err = errors.len();
     let lang = parse_lang_attr(&raw.attrs, errors);
+    // Unknown `lang=` (e.g. `<script lang="coffee">`) — upstream's LS
+    // `DiagnosticsProvider.ts:72-77` early-returns `[]` for coffee /
+    // coffeescript bodies so they never reach TS. Mirror by blanking
+    // the body slice: `parse_script_body("", _)` produces an empty
+    // AST, no oxc-as-JS parse errors cascade, and the overlay emits
+    // only scaffolding. The `UnknownScriptLang` warning that
+    // `parse_lang_attr` already pushed remains the user-facing
+    // signal that the script is opaque.
+    let unknown_lang = errors.len() > pre_err
+        && matches!(errors.last(), Some(ParseError::UnknownScriptLang { .. }));
+    let (content, content_range) = if unknown_lang {
+        (
+            "",
+            Range::new(raw.content_range.start, raw.content_range.start),
+        )
+    } else {
+        (raw.content, raw.content_range)
+    };
     // `generics="T extends ..."` is only meaningful on the INSTANCE
     // script; ignore it on `<script module>` where type parameters
     // wouldn't have anything to apply to (the render function lives in
@@ -494,9 +513,9 @@ fn build_script_section<'src>(
     };
     ScriptSection {
         open_tag_range: raw.open_tag_range,
-        content_range: raw.content_range,
+        content_range,
         close_tag_range: raw.close_tag_range,
-        content: raw.content,
+        content,
         lang,
         context,
         generics,
