@@ -147,17 +147,14 @@ fn validator_samples_dir() -> PathBuf {
 #[test]
 fn upstream_validator_fixtures() {
     let dir = validator_samples_dir();
-    if !dir.is_dir() {
-        eprintln!(
-            "SKIP: upstream clone not available at {}. Run \
-             `git clone --filter=blob:none --no-checkout \
-             https://github.com/sveltejs/svelte.git .svelte-upstream/svelte && \
-             git -C .svelte-upstream/svelte checkout HEAD -- \
-             packages/svelte/messages packages/svelte/tests/validator` to enable.",
-            dir.display()
-        );
-        return;
-    }
+    assert!(
+        dir.is_dir(),
+        "upstream clone not available at {}. \
+         The svelte-upstream submodule is required: run \
+         `git submodule update --init --recursive .svelte-upstream/svelte` \
+         from the workspace root.",
+        dir.display()
+    );
 
     let ported: BTreeSet<&str> = PORTED_CODES.iter().copied().collect();
     let mut total = 0usize;

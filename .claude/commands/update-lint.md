@@ -11,24 +11,15 @@ sites, and test fixtures that our Rust port mirrors.
 1. Read the pinned SHA from `.upstream-pin` — the `sha = "..."` line
    under `[svelte-compiler]`. Call this `<PINNED>`.
 
-2. Refresh the blobless clone. The upstream repo lives at
-   `.svelte-upstream/svelte/` (blobless, `--no-checkout`).
+2. Refresh the upstream submodule. The upstream repo lives at
+   `.svelte-upstream/svelte/` (blobless, sparse-checkout of
+   `packages/svelte/{messages,src/compiler,tests/validator}`).
    ```
    git -C .svelte-upstream/svelte fetch origin
    ```
    Resolve `origin/HEAD`'s SHA — call this `<NEW>`. If `<NEW>` ==
    `<PINNED>`, report "no upstream compiler changes since last
    review" and stop.
-
-   Re-checkout the tracked subtrees so diffs + tests see current
-   state (we only need these three directories — don't check out the
-   whole tree):
-   ```
-   git -C .svelte-upstream/svelte checkout HEAD -- \
-     packages/svelte/messages \
-     packages/svelte/src/compiler \
-     packages/svelte/tests/validator
-   ```
 
 3. List compile-warning-relevant commits landed since the pin:
    ```
@@ -148,11 +139,15 @@ sites, and test fixtures that our Rust port mirrors.
 - **Message text fidelity matters.** Tier A's parity check is exact
   string match (sans docs URL). If you skip regen-lint-catalog
   after an upstream message reword, the runner will go red.
-- **The clone is gitignored.** `.svelte-upstream/` is in
-  `.gitignore`; the pin file (`.upstream-pin`) is the canonical
-  record. A fresh checkout needs to `git clone --filter=blob:none
-  --no-checkout https://github.com/sveltejs/svelte.git
-  .svelte-upstream/svelte && git -C .svelte-upstream/svelte
-  checkout HEAD -- packages/svelte/messages packages/svelte/tests/validator
-  packages/svelte/src/compiler` before the catalog regen + tests
-  will work.
+- **The clone is a submodule.** `.svelte-upstream/svelte` is a
+  shallow + sparse-checkout submodule (gitlinked at the build/test
+  pin). `.upstream-pin` tracks the LAST-REVIEWED sha — distinct
+  from the gitlink (which is what we currently build/test against).
+  A fresh checkout needs:
+  ```
+  git submodule update --init --recursive .svelte-upstream/svelte
+  ```
+  Sparse-checkout paths are configured in
+  `.svelte-upstream/svelte/.git/info/sparse-checkout`:
+  `packages/svelte/messages/`, `packages/svelte/src/compiler/`,
+  `packages/svelte/tests/validator/`.
