@@ -49,9 +49,7 @@
 use std::collections::HashSet;
 
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{
-    BindingPattern, Expression, LabeledStatement, Statement, VariableDeclarator,
-};
+use oxc_ast::ast::{BindingPattern, Expression, LabeledStatement, Statement, VariableDeclarator};
 use oxc_span::GetSpan;
 use smol_str::SmolStr;
 use svn_parser::{ScriptLang, parse_script_body};

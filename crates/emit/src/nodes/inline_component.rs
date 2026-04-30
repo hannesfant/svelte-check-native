@@ -601,9 +601,9 @@ fn write_prop_shape(buf: &mut EmitBuffer, source: &str, p: &svn_analyze::PropSha
                     svn_parser::AttrValuePart::Expression {
                         expression_range, ..
                     } => {
-                        let Some(expr) = source.get(
-                            expression_range.start as usize..expression_range.end as usize,
-                        ) else {
+                        let Some(expr) = source
+                            .get(expression_range.start as usize..expression_range.end as usize)
+                        else {
                             buf.push_str("${undefined}");
                             continue;
                         };

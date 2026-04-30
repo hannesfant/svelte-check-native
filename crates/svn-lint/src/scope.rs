@@ -37,11 +37,11 @@ use svn_core::Range;
 use svn_parser::document::{Document, ScriptSection};
 use svn_parser::parse_script_body;
 
+pub use crate::scope_rune_detection::is_rune_name;
 use crate::scope_rune_detection::{
     detect_bindable_default, detect_rune_call_from_call, is_primitive_expr, is_primitive_rune_init,
     state_rune_primitive_arg,
 };
-pub use crate::scope_rune_detection::is_rune_name;
 use crate::scope_util::{
     base_identifier, expression_from_default, expression_from_for_init,
     expression_from_property_key, extract_base_ident, idents_in_pattern, statement_span_start,
@@ -1844,8 +1844,7 @@ impl<'b, 'src> ScriptWalker<'b, 'src> {
         // destructure, the rest element becomes RestProp, and
         // `$bindable(default)` fallbacks flip to BindableProp.
         let is_props = matches!(rune, Some(RuneCall::Props));
-        let is_props_identifier =
-            is_props && matches!(&d.id, BindingPattern::BindingIdentifier(_));
+        let is_props_identifier = is_props && matches!(&d.id, BindingPattern::BindingIdentifier(_));
 
         // custom_element_props_identifier candidate. Upstream
         // `VariableDeclarator.js:72-83` fires on Identifier form
@@ -1856,9 +1855,7 @@ impl<'b, 'src> ScriptWalker<'b, 'src> {
         // absence of an explicit `props` option on it.
         if is_props {
             let warn_range = match &d.id {
-                BindingPattern::BindingIdentifier(id) => {
-                    Some(self.abs(id.span.start, id.span.end))
-                }
+                BindingPattern::BindingIdentifier(id) => Some(self.abs(id.span.start, id.span.end)),
                 BindingPattern::ObjectPattern(op) => {
                     op.rest.as_ref().map(|r| self.abs(r.span.start, r.span.end))
                 }
@@ -1981,14 +1978,13 @@ impl<'b, 'src> ScriptWalker<'b, 'src> {
                 } else {
                     // Unwrap an AssignmentPattern to see if there's a
                     // default expression.
-                    let default =
-                        if let BindingPattern::AssignmentPattern(ap) = &prop.value {
-                            InitialKind::Expression {
-                                primitive: is_primitive_expr(&ap.right),
-                            }
-                        } else {
-                            InitialKind::None
-                        };
+                    let default = if let BindingPattern::AssignmentPattern(ap) = &prop.value {
+                        InitialKind::Expression {
+                            primitive: is_primitive_expr(&ap.right),
+                        }
+                    } else {
+                        InitialKind::None
+                    };
                     (BindingKind::Prop, default)
                 }
             } else {
@@ -2520,4 +2516,3 @@ fn apply_template_flags_since(
         }
     }
 }
-

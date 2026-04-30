@@ -431,9 +431,7 @@ fn statement_declares_events(stmt: &oxc_ast::ast::Statement<'_>) -> bool {
 /// Module-script declarations don't count — upstream's
 /// `processModuleScriptTag.ts:127` rejects `$$Slots` there. Same
 /// rule we apply for `$$Events`.
-pub(crate) fn has_strict_slots_ast(
-    parsed_instance: Option<&svn_parser::ParsedScript<'_>>,
-) -> bool {
+pub(crate) fn has_strict_slots_ast(parsed_instance: Option<&svn_parser::ParsedScript<'_>>) -> bool {
     parsed_instance.is_some_and(|p| {
         p.program
             .body

@@ -340,11 +340,7 @@ fn write_slot_attr_expr(out: &mut String, source: &str, expr: &svn_analyze::Slot
     out.push(')');
 }
 
-fn write_slot_attr_expr_inner(
-    out: &mut String,
-    source: &str,
-    expr: &svn_analyze::SlotAttrExpr,
-) {
+fn write_slot_attr_expr_inner(out: &mut String, source: &str, expr: &svn_analyze::SlotAttrExpr) {
     match expr {
         // Range form — slice the original source. A `get`
         // miss means the caller passed a source the walker

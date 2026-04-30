@@ -530,8 +530,7 @@ fn emit_document_with_render_name(
             if let Some(p) = parsed_instance.as_ref() {
                 let all_inline_member_names =
                     svn_analyze::collect_inline_typed_dispatcher_member_names(&p.program);
-                let mut seen: std::collections::HashSet<String> =
-                    std::collections::HashSet::new();
+                let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
                 let mut already_in_untyped: std::collections::HashSet<String> =
                     untyped_names.iter().cloned().collect();
                 for name in all_inline_member_names {
@@ -1050,7 +1049,10 @@ fn emit_document_with_render_name(
             (None, None) => None,
         };
         // Layer in: untyped overrides everything.
-        match (after_bubble.as_deref(), synthesized_untyped_events.as_deref()) {
+        match (
+            after_bubble.as_deref(),
+            synthesized_untyped_events.as_deref(),
+        ) {
             (Some(prev), Some(u)) => Some(override_layer(prev, u)),
             (Some(prev), None) => Some(prev.to_string()),
             (None, Some(u)) => Some(format!("({u})")),

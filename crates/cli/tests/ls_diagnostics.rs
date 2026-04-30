@@ -41,7 +41,10 @@ fn ls_diagnostics_suite() {
     let output = match Command::new("node")
         .arg(runner.to_str().expect("runner path is utf-8"))
         .env("SVELTE_CHECK_BIN", bin)
-        .env("FIXTURES_DIR", fixtures.to_str().expect("fixtures dir is utf-8"))
+        .env(
+            "FIXTURES_DIR",
+            fixtures.to_str().expect("fixtures dir is utf-8"),
+        )
         .output()
     {
         Ok(output) => output,

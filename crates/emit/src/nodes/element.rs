@@ -160,8 +160,10 @@ pub(crate) fn emit_svelte_element_node(
     // (the `this` expression text or `__svn_self_default`), and
     // emit walks them through `emit_component_call` to produce
     // `__svn_ensure_component(<root>); new $$_C({…})`.
-    if matches!(s.kind, SvelteElementKind::SelfRef | SvelteElementKind::Component)
-        && let Some(inst) = insts.get(&s.range.start)
+    if matches!(
+        s.kind,
+        SvelteElementKind::SelfRef | SvelteElementKind::Component
+    ) && let Some(inst) = insts.get(&s.range.start)
     {
         let snippet_children: Vec<&svn_parser::SnippetBlock> = s
             .children
@@ -282,24 +284,23 @@ pub(crate) fn emit_svelte_element_node(
     // (a) injected as createElement props and (b) skipped from the
     // children walk (avoiding double-emit). Other snippet names
     // (user-defined) walk through the regular path.
-    let boundary_snippet_props: Vec<&svn_parser::SnippetBlock> = if dom_emit
-        && matches!(s.kind, SvelteElementKind::Boundary)
-    {
-        s.children
-            .nodes
-            .iter()
-            .filter_map(|n| match n {
-                svn_parser::Node::SnippetBlock(b)
-                    if b.name.as_str() == "failed" || b.name.as_str() == "pending" =>
-                {
-                    Some(b)
-                }
-                _ => None,
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let boundary_snippet_props: Vec<&svn_parser::SnippetBlock> =
+        if dom_emit && matches!(s.kind, SvelteElementKind::Boundary) {
+            s.children
+                .nodes
+                .iter()
+                .filter_map(|n| match n {
+                    svn_parser::Node::SnippetBlock(b)
+                        if b.name.as_str() == "failed" || b.name.as_str() == "pending" =>
+                    {
+                        Some(b)
+                    }
+                    _ => None,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
     if dom_emit {
         if matches!(s.kind, SvelteElementKind::Boundary) {
             // Inline emit so boundary's `failed` / `pending` snippets

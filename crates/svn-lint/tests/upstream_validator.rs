@@ -276,15 +276,17 @@ fn upstream_validator_fixtures() {
         }
     }
 
-    let total_skipped = skipped_module_mode.len()
-        + skipped_compile_options.len()
-        + skipped_unported_code.len();
+    let total_skipped =
+        skipped_module_mode.len() + skipped_compile_options.len() + skipped_unported_code.len();
     eprintln!("upstream validator fixtures:");
     eprintln!("  total with warnings.json: {total}");
     eprintln!("  enforced (all codes ported): {enforced}");
     eprintln!("  passing: {passing}");
     eprintln!("  skipped (total): {total_skipped}");
-    eprintln!("    - module-only (input.svelte.js): {}", skipped_module_mode.len());
+    eprintln!(
+        "    - module-only (input.svelte.js): {}",
+        skipped_module_mode.len()
+    );
     eprintln!(
         "    - compile-option-gated (_config.js): {}",
         skipped_compile_options.len()
@@ -296,7 +298,10 @@ fn upstream_validator_fixtures() {
     if !skipped_module_mode.is_empty() {
         let mut names = skipped_module_mode.clone();
         names.sort();
-        eprintln!("      module-only fixtures:\n        {}", names.join("\n        "));
+        eprintln!(
+            "      module-only fixtures:\n        {}",
+            names.join("\n        ")
+        );
     }
     if !skipped_compile_options.is_empty() {
         let mut names = skipped_compile_options.clone();

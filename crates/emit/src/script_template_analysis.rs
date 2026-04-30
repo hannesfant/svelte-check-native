@@ -94,12 +94,14 @@ pub(crate) fn analyze_script_and_template_refs<'alloc>(
             // `PageData` / `LayoutData` / `ActionData` from the file
             // path + the list of destructured prop names. Only fires
             // when PropsInfo saw no user-provided source.
-            let ty = effective_props_type_text.map(|s| s.to_string()).or_else(|| {
-                sveltekit::route_kind(source_path).and_then(|kind| {
-                    let names_borrow: Vec<&str> = props.iter().map(|s| s.as_str()).collect();
-                    sveltekit::synthesize_route_props_type(kind, &names_borrow)
-                })
-            });
+            let ty = effective_props_type_text
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    sveltekit::route_kind(source_path).and_then(|kind| {
+                        let names_borrow: Vec<&str> = props.iter().map(|s| s.as_str()).collect();
+                        sveltekit::synthesize_route_props_type(kind, &names_borrow)
+                    })
+                });
 
             collect_top_level_bindings(&parsed_orig.program, &mut script_bindings);
             if let Some(rewritten) = rewritten_content {
