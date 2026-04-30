@@ -119,7 +119,6 @@ const SKIP_LIST = {
     'actions-animations-transitions-typechecks': 'overlay-counts: 2345 expected 2×, ours 0×',
     'bindings': 'overlay-counts: 2322/2339/2353 multiset diverges',
     'component-invalid': 'overlay-counts: 2322/2345 missing, 2353/2554 extra',
-    'each': 'overlay-counts: 2345 expected 2×, ours 0×',
     'element-attributes': 'overlay-counts: 2353 expected 2×, ours 0×',
     'element-events': 'overlay-counts: 2339/2353 missing, 7006 extra',
     'generics': 'overlay-counts: 2322/2367 multiset diverges',

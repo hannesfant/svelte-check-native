@@ -336,8 +336,19 @@ declare function $host<El extends HTMLElement = HTMLElement>(): El;
 // files. Declared here so the generated code type-checks. The `__svn_*`
 // prefix marks them as ours; user code shouldn't touch them.
 
-/** Iterable wrapper for `{#each}` blocks. Accepts arrays, ArrayLike (`{ length: N }`), and any other iterable. */
-declare function __svn_each_items<T>(value: T): Iterable<__SvnEachItem<T>>;
+/**
+ * Iterable wrapper for `{#each}` blocks. Mirrors upstream's
+ * `__sveltets_2_ensureArray<T extends ArrayLike<unknown> |
+ * Iterable<unknown>>(array: T | undefined | null)`
+ * (`svelte-shims-v4.d.ts:253-256`). The constraint fires TS2345 on
+ * non-arraylike non-iterable expressions (`{#each {}}`,
+ * `{#each 1}`); the `T | undefined | null` parameter widening lets
+ * `Foo[] | undefined` narrow to `Foo[]` for item typing without
+ * losing the runtime null-tolerance.
+ */
+declare function __svn_each_items<T extends ArrayLike<unknown> | Iterable<unknown>>(
+    value: T | undefined | null,
+): Iterable<__SvnEachItem<T>>;
 
 /** Resolved item type for `__svn_each_items`. The `0 extends 1 & T` guard preserves `any` (avoids the conditional-type-distribution-collapses-to-unknown trap). */
 type __SvnEachItem<T> = 0 extends 1 & T
