@@ -8,7 +8,7 @@
 //! land its descent fix in two places. Keeping the recursion in one
 //! module means a new oxc enum variant only adds one match arm, not seven.
 
-use oxc_ast::ast::{Expression, Statement};
+use oxc_ast::ast::{Declaration, Expression, ForStatementInit, Statement};
 
 /// Walk an expression looking for nested function/arrow bodies — including
 /// those passed as call arguments (`setTimeout(() => { … })`) and reachable
@@ -159,5 +159,183 @@ pub fn collect_function_body_stmts<'a, 'b>(
         // Literals, identifiers, this/super/meta, update/private-in
         // — no nested function bodies to discover.
         _ => {}
+    }
+}
+
+/// Visit `stmt` and every Statement reachable through control-flow
+/// descent: block bodies, function bodies, if/else branches, loop
+/// bodies, switch cases, try/catch/finally blocks, labeled-statement
+/// bodies, AND IIFE bodies embedded in expressions of expression
+/// statements / for-init/test/update / return arguments / if-tests
+/// etc. ExportNamedDeclaration's wrapped Variable/Function declarations
+/// surface as if they were direct `Statement::VariableDeclaration` /
+/// `Statement::FunctionDeclaration` (the closure sees the synthesised
+/// view through the same `&Statement` reference).
+///
+/// Visitation order: the parent statement is visited first, then its
+/// children in source order. Callers that need source-order
+/// observation (e.g. dispatcher-locals registration tracking
+/// declaration sites) get it for free.
+///
+/// `f` is invoked on every Statement node — the closure decides which
+/// variants are interesting. Use `walk_program` for whole-program
+/// traversal.
+///
+/// IMPORTANT: this is the descent surface every dispatcher /
+/// slot-attr-rewrite walker SHOULD use instead of hand-rolling
+/// `match Statement::*`. Per `notes/PARITY_TESTING_PLAN.md` P3, the
+/// hand-rolled walkers were the source of repeated review rounds —
+/// every new oxc enum variant was a silent miss in 7 places. This
+/// helper keeps the enumeration in ONE place.
+pub fn walk_statement_descend<'a, 'b, F>(stmt: &'a Statement<'b>, f: &mut F)
+where
+    F: FnMut(&'a Statement<'b>),
+{
+    f(stmt);
+    walk_statement_children(stmt, f);
+}
+
+fn walk_statement_children<'a, 'b, F>(stmt: &'a Statement<'b>, f: &mut F)
+where
+    F: FnMut(&'a Statement<'b>),
+{
+    let mut iife_stmts: Vec<&'a Statement<'b>> = Vec::new();
+    match stmt {
+        Statement::BlockStatement(b) => {
+            for s in &b.body {
+                walk_statement_descend(s, f);
+            }
+        }
+        Statement::FunctionDeclaration(fd) => {
+            if let Some(body) = &fd.body {
+                for s in &body.statements {
+                    walk_statement_descend(s, f);
+                }
+            }
+        }
+        Statement::ExportNamedDeclaration(ed) => match &ed.declaration {
+            Some(Declaration::FunctionDeclaration(fd)) => {
+                if let Some(body) = &fd.body {
+                    for s in &body.statements {
+                        walk_statement_descend(s, f);
+                    }
+                }
+            }
+            Some(Declaration::VariableDeclaration(decl)) => {
+                for d in &decl.declarations {
+                    if let Some(init) = &d.init {
+                        collect_function_body_stmts(init, &mut iife_stmts);
+                    }
+                }
+            }
+            _ => {}
+        },
+        Statement::IfStatement(s) => {
+            collect_function_body_stmts(&s.test, &mut iife_stmts);
+            walk_statement_descend(&s.consequent, f);
+            if let Some(alt) = &s.alternate {
+                walk_statement_descend(alt, f);
+            }
+        }
+        Statement::ExpressionStatement(es) => {
+            collect_function_body_stmts(&es.expression, &mut iife_stmts);
+        }
+        Statement::ReturnStatement(rs) => {
+            if let Some(arg) = &rs.argument {
+                collect_function_body_stmts(arg, &mut iife_stmts);
+            }
+        }
+        Statement::VariableDeclaration(decl) => {
+            for d in &decl.declarations {
+                if let Some(init) = &d.init {
+                    collect_function_body_stmts(init, &mut iife_stmts);
+                }
+            }
+        }
+        Statement::ForStatement(s) => {
+            if let Some(init) = &s.init {
+                match init {
+                    ForStatementInit::VariableDeclaration(decl) => {
+                        for d in &decl.declarations {
+                            if let Some(d_init) = &d.init {
+                                collect_function_body_stmts(d_init, &mut iife_stmts);
+                            }
+                        }
+                    }
+                    other => {
+                        if let Some(e) = other.as_expression() {
+                            collect_function_body_stmts(e, &mut iife_stmts);
+                        }
+                    }
+                }
+            }
+            if let Some(test) = &s.test {
+                collect_function_body_stmts(test, &mut iife_stmts);
+            }
+            if let Some(update) = &s.update {
+                collect_function_body_stmts(update, &mut iife_stmts);
+            }
+            walk_statement_descend(&s.body, f);
+        }
+        Statement::ForInStatement(s) => {
+            collect_function_body_stmts(&s.right, &mut iife_stmts);
+            walk_statement_descend(&s.body, f);
+        }
+        Statement::ForOfStatement(s) => {
+            collect_function_body_stmts(&s.right, &mut iife_stmts);
+            walk_statement_descend(&s.body, f);
+        }
+        Statement::WhileStatement(s) => {
+            collect_function_body_stmts(&s.test, &mut iife_stmts);
+            walk_statement_descend(&s.body, f);
+        }
+        Statement::DoWhileStatement(s) => {
+            walk_statement_descend(&s.body, f);
+            collect_function_body_stmts(&s.test, &mut iife_stmts);
+        }
+        Statement::SwitchStatement(s) => {
+            collect_function_body_stmts(&s.discriminant, &mut iife_stmts);
+            for case in &s.cases {
+                if let Some(test) = &case.test {
+                    collect_function_body_stmts(test, &mut iife_stmts);
+                }
+                for stmt in &case.consequent {
+                    walk_statement_descend(stmt, f);
+                }
+            }
+        }
+        Statement::TryStatement(s) => {
+            for stmt in &s.block.body {
+                walk_statement_descend(stmt, f);
+            }
+            if let Some(handler) = &s.handler {
+                for stmt in &handler.body.body {
+                    walk_statement_descend(stmt, f);
+                }
+            }
+            if let Some(finalizer) = &s.finalizer {
+                for stmt in &finalizer.body {
+                    walk_statement_descend(stmt, f);
+                }
+            }
+        }
+        Statement::LabeledStatement(s) => {
+            walk_statement_descend(&s.body, f);
+        }
+        Statement::ThrowStatement(s) => {
+            collect_function_body_stmts(&s.argument, &mut iife_stmts);
+        }
+        Statement::WithStatement(s) => {
+            collect_function_body_stmts(&s.object, &mut iife_stmts);
+            walk_statement_descend(&s.body, f);
+        }
+        // Leaf statements: BreakStatement, ContinueStatement, DebuggerStatement,
+        // EmptyStatement, ImportDeclaration, ExportAllDeclaration,
+        // ExportDefaultDeclaration, ClassDeclaration, TS*Declaration —
+        // no nested Statement / IIFE descent for the dispatcher walkers.
+        _ => {}
+    }
+    for s in iife_stmts {
+        walk_statement_descend(s, f);
     }
 }

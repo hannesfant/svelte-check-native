@@ -1874,13 +1874,30 @@ fn scan_expression_for_dispatched_names(
 /// walk only fires on real call expressions.
 pub fn has_event_dispatcher_call(program: &oxc_ast::ast::Program<'_>) -> bool {
     let ctor_locals = collect_ctor_locals(program);
-    program
-        .body
-        .iter()
-        .any(|s| statement_has_dispatcher_call(s, &ctor_locals))
+    let mut found = false;
+    for stmt in &program.body {
+        crate::ast_walk::walk_statement_descend(stmt, &mut |s| {
+            if found {
+                return;
+            }
+            if statement_local_has_dispatcher_call(s, &ctor_locals) {
+                found = true;
+            }
+        });
+        if found {
+            return true;
+        }
+    }
+    false
 }
 
-fn statement_has_dispatcher_call(
+/// Local check: does THIS statement (NOT its descendants — that's the
+/// walker's job) directly hold a dispatcher-call expression? Returns
+/// true only when an expression on this statement (init / es-expr / etc.)
+/// itself contains a dispatcher call. The descent into nested function
+/// bodies / control-flow children is handled by `walk_statement_descend`,
+/// which surfaces every reachable statement back to the closure.
+fn statement_local_has_dispatcher_call(
     stmt: &Statement<'_>,
     ctor_locals: &std::collections::HashSet<String>,
 ) -> bool {
@@ -1889,52 +1906,28 @@ fn statement_has_dispatcher_call(
             .declarations
             .iter()
             .filter_map(|d| d.init.as_ref())
-            .any(|e| expression_has_dispatcher_call(e, ctor_locals)),
+            .any(|e| expression_has_dispatcher_call_local(e, ctor_locals)),
         Statement::ExpressionStatement(es) => {
-            expression_has_dispatcher_call(&es.expression, ctor_locals)
+            expression_has_dispatcher_call_local(&es.expression, ctor_locals)
         }
-        Statement::FunctionDeclaration(fd) => fd.body.as_ref().is_some_and(|body| {
-            body.statements
-                .iter()
-                .any(|s| statement_has_dispatcher_call(s, ctor_locals))
-        }),
-        // Round-15 #1: `export const x = …` / `export function …` —
-        // upstream walks the inner decl identically.
         Statement::ExportNamedDeclaration(ed) => match &ed.declaration {
             Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) => decl
                 .declarations
                 .iter()
                 .filter_map(|d| d.init.as_ref())
-                .any(|e| expression_has_dispatcher_call(e, ctor_locals)),
-            Some(oxc_ast::ast::Declaration::FunctionDeclaration(fd)) => {
-                fd.body.as_ref().is_some_and(|body| {
-                    body.statements
-                        .iter()
-                        .any(|s| statement_has_dispatcher_call(s, ctor_locals))
-                })
-            }
+                .any(|e| expression_has_dispatcher_call_local(e, ctor_locals)),
             _ => false,
         },
-        Statement::IfStatement(s) => {
-            // Round-14 #1: an IIFE in the if-test that calls a
-            // dispatcher counts too.
-            statements_inside_function_expr(&s.test)
-                .iter()
-                .any(|s2| statement_has_dispatcher_call(s2, ctor_locals))
-                || statement_has_dispatcher_call(&s.consequent, ctor_locals)
-                || s.alternate
-                    .as_ref()
-                    .is_some_and(|s| statement_has_dispatcher_call(s, ctor_locals))
-        }
-        Statement::BlockStatement(b) => b
-            .body
-            .iter()
-            .any(|s| statement_has_dispatcher_call(s, ctor_locals)),
         _ => false,
     }
 }
 
-fn expression_has_dispatcher_call(
+/// Local-only expression scan: does `expr` contain a dispatcher call
+/// at THIS expression level (or in a sub-expression that isn't a
+/// function/arrow body)? The walker handles descent into nested
+/// function bodies separately, so this stays a non-recursive scan
+/// across structural expression operators.
+fn expression_has_dispatcher_call_local(
     expr: &Expression<'_>,
     ctor_locals: &std::collections::HashSet<String>,
 ) -> bool {
@@ -1945,24 +1938,29 @@ fn expression_has_dispatcher_call(
             {
                 return true;
             }
-            if expression_has_dispatcher_call(&call.callee, ctor_locals) {
+            if expression_has_dispatcher_call_local(&call.callee, ctor_locals) {
                 return true;
             }
             call.arguments.iter().any(|a| {
                 a.as_expression()
-                    .is_some_and(|e| expression_has_dispatcher_call(e, ctor_locals))
+                    .is_some_and(|e| expression_has_dispatcher_call_local(e, ctor_locals))
             })
         }
-        Expression::ArrowFunctionExpression(arrow) => arrow
-            .body
-            .statements
-            .iter()
-            .any(|s| statement_has_dispatcher_call(s, ctor_locals)),
-        Expression::FunctionExpression(fe) => fe.body.as_ref().is_some_and(|body| {
-            body.statements
-                .iter()
-                .any(|s| statement_has_dispatcher_call(s, ctor_locals))
-        }),
+        // Stop at function/arrow bodies — `walk_statement_descend`
+        // surfaces those statements as separate visits.
+        Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_) => false,
+        Expression::ParenthesizedExpression(p) => {
+            expression_has_dispatcher_call_local(&p.expression, ctor_locals)
+        }
+        Expression::TSAsExpression(t) => {
+            expression_has_dispatcher_call_local(&t.expression, ctor_locals)
+        }
+        Expression::TSSatisfiesExpression(t) => {
+            expression_has_dispatcher_call_local(&t.expression, ctor_locals)
+        }
+        Expression::TSNonNullExpression(t) => {
+            expression_has_dispatcher_call_local(&t.expression, ctor_locals)
+        }
         _ => false,
     }
 }
