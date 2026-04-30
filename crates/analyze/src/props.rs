@@ -576,227 +576,33 @@ pub fn find_dispatcher_event_type_sources(
     // dropped because upstream never reaches them via
     // `setEventDispatcher`. Walk recursively through function/block/
     // if bodies so nested declarations land too.
+    let mut handle_var_decl = |decl: &oxc_ast::ast::VariableDeclaration<'_>| {
+        for d in &decl.declarations {
+            if !matches!(&d.id, BindingPattern::BindingIdentifier(_)) {
+                continue;
+            }
+            let Some(init) = &d.init else { continue };
+            if let Some(slice) = dispatcher_type_arg_slice(init, source, &ctor_locals) {
+                out.push(slice);
+            }
+        }
+    };
     for stmt in &program.body {
-        statement_collect_typed_dispatcher_slices(stmt, source, &ctor_locals, &mut out);
+        crate::ast_walk::walk_statement_descend(stmt, &mut |node| match node {
+            crate::ast_walk::WalkNode::Statement(Statement::VariableDeclaration(decl)) => {
+                handle_var_decl(decl);
+            }
+            crate::ast_walk::WalkNode::Statement(Statement::ExportNamedDeclaration(ed)) => {
+                if let Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) = &ed.declaration
+                {
+                    handle_var_decl(decl);
+                }
+            }
+            crate::ast_walk::WalkNode::ForInitVarDecl(decl) => handle_var_decl(decl),
+            _ => {}
+        });
     }
     out
-}
-
-/// Round-15 #1: shared body for `Statement::VariableDeclaration` /
-/// `ExportNamedDeclaration(Declaration::VariableDeclaration)` arms.
-/// Walks each declarator's init for an inline `<T>` type-arg slice
-/// and recurses through any function/arrow expression bodies the
-/// init contains.
-fn collect_typed_slices_from_var_decl(
-    decl: &oxc_ast::ast::VariableDeclaration<'_>,
-    source: &str,
-    ctor_locals: &std::collections::HashSet<String>,
-    out: &mut Vec<String>,
-) {
-    for d in &decl.declarations {
-        if !matches!(&d.id, BindingPattern::BindingIdentifier(_)) {
-            continue;
-        }
-        let Some(init) = &d.init else { continue };
-        if let Some(slice) = dispatcher_type_arg_slice(init, source, ctor_locals) {
-            out.push(slice);
-        }
-        // Round-10 follow-up #2: recurse into function/arrow
-        // expression bodies used as the variable's initializer.
-        // Common shape: `const setup = () => { const d =
-        // createEventDispatcher<{...}>() }`.
-        for s in statements_inside_function_expr(init) {
-            statement_collect_typed_dispatcher_slices(s, source, ctor_locals, out);
-        }
-    }
-}
-
-fn statement_collect_typed_dispatcher_slices(
-    stmt: &Statement<'_>,
-    source: &str,
-    ctor_locals: &std::collections::HashSet<String>,
-    out: &mut Vec<String>,
-) {
-    match stmt {
-        Statement::VariableDeclaration(decl) => {
-            collect_typed_slices_from_var_decl(decl, source, ctor_locals, out);
-        }
-        Statement::FunctionDeclaration(fd) => {
-            if let Some(body) = &fd.body {
-                for s in &body.statements {
-                    statement_collect_typed_dispatcher_slices(s, source, ctor_locals, out);
-                }
-            }
-        }
-        // Round-15 #1: `export const x = …` / `export function …` /
-        // wraps a Var/FnDecl in `ExportNamedDeclaration`. Upstream
-        // (`processInstanceScriptContent.ts:271`) visits every
-        // statement via `ts.forEachChild`, so the export wrapper
-        // doesn't hide the inner decl from the dispatcher pass.
-        Statement::ExportNamedDeclaration(ed) => match &ed.declaration {
-            Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) => {
-                collect_typed_slices_from_var_decl(decl, source, ctor_locals, out);
-            }
-            Some(oxc_ast::ast::Declaration::FunctionDeclaration(fd)) => {
-                if let Some(body) = &fd.body {
-                    for s in &body.statements {
-                        statement_collect_typed_dispatcher_slices(s, source, ctor_locals, out);
-                    }
-                }
-            }
-            _ => {}
-        },
-        Statement::IfStatement(s) => {
-            // Round-14 #1: walk function-body stmts inside the if-test
-            // expression too. `if ((() => { const d =
-            // createEventDispatcher<{x:string}>(); … })()) { … }`
-            // hides a typed dispatcher decl in an IIFE; pre-fix
-            // native skipped it.
-            for s2 in statements_inside_function_expr(&s.test) {
-                statement_collect_typed_dispatcher_slices(s2, source, ctor_locals, out);
-            }
-            statement_collect_typed_dispatcher_slices(&s.consequent, source, ctor_locals, out);
-            if let Some(alt) = &s.alternate {
-                statement_collect_typed_dispatcher_slices(alt, source, ctor_locals, out);
-            }
-        }
-        Statement::BlockStatement(b) => {
-            for s in &b.body {
-                statement_collect_typed_dispatcher_slices(s, source, ctor_locals, out);
-            }
-        }
-        Statement::ExpressionStatement(es) => {
-            // IIFE-shaped wrappers (`(() => { ... })()`) and call-
-            // argument callbacks (`setTimeout(() => { ... })`) — walk
-            // the function bodies inside the call so nested
-            // declarations still land. A bare
-            // `createEventDispatcher<{...}>()` here is intentionally
-            // NOT collected (round-9 #3).
-            for s in statements_inside_function_expr(&es.expression) {
-                statement_collect_typed_dispatcher_slices(s, source, ctor_locals, out);
-            }
-        }
-        // Round-12 follow-up #4: recurse through control-flow
-        // statements upstream's TS walker visits via
-        // `ts.forEachChild`.
-        Statement::ForStatement(s) => {
-            // Round-13 follow-up #6: walk init/test/update too. The
-            // init can be a VariableDeclaration (a dispatcher decl
-            // like `for (let d = createEventDispatcher(); …)`),
-            // and any of init/test/update can carry function-body
-            // expressions (`for (let d = (() => …)(); …)`).
-            if let Some(init) = &s.init {
-                use oxc_ast::ast::ForStatementInit;
-                match init {
-                    ForStatementInit::VariableDeclaration(decl) => {
-                        for d in &decl.declarations {
-                            if !matches!(&d.id, BindingPattern::BindingIdentifier(_)) {
-                                continue;
-                            }
-                            let Some(d_init) = &d.init else { continue };
-                            if let Some(slice) =
-                                dispatcher_type_arg_slice(d_init, source, ctor_locals)
-                            {
-                                out.push(slice);
-                            }
-                            for s2 in statements_inside_function_expr(d_init) {
-                                statement_collect_typed_dispatcher_slices(
-                                    s2,
-                                    source,
-                                    ctor_locals,
-                                    out,
-                                );
-                            }
-                        }
-                    }
-                    other => {
-                        if let Some(expr) = other.as_expression() {
-                            for s2 in statements_inside_function_expr(expr) {
-                                statement_collect_typed_dispatcher_slices(
-                                    s2,
-                                    source,
-                                    ctor_locals,
-                                    out,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(test) = &s.test {
-                for s2 in statements_inside_function_expr(test) {
-                    statement_collect_typed_dispatcher_slices(s2, source, ctor_locals, out);
-                }
-            }
-            if let Some(update) = &s.update {
-                for s2 in statements_inside_function_expr(update) {
-                    statement_collect_typed_dispatcher_slices(s2, source, ctor_locals, out);
-                }
-            }
-            statement_collect_typed_dispatcher_slices(&s.body, source, ctor_locals, out);
-        }
-        Statement::ForInStatement(s) => {
-            // Round-13 #6: walk left (declaration or expression)
-            // and right (the iterated expression).
-            for s2 in statements_inside_function_expr(&s.right) {
-                statement_collect_typed_dispatcher_slices(s2, source, ctor_locals, out);
-            }
-            statement_collect_typed_dispatcher_slices(&s.body, source, ctor_locals, out);
-        }
-        Statement::ForOfStatement(s) => {
-            for s2 in statements_inside_function_expr(&s.right) {
-                statement_collect_typed_dispatcher_slices(s2, source, ctor_locals, out);
-            }
-            statement_collect_typed_dispatcher_slices(&s.body, source, ctor_locals, out);
-        }
-        Statement::WhileStatement(s) => {
-            for s2 in statements_inside_function_expr(&s.test) {
-                statement_collect_typed_dispatcher_slices(s2, source, ctor_locals, out);
-            }
-            statement_collect_typed_dispatcher_slices(&s.body, source, ctor_locals, out);
-        }
-        Statement::DoWhileStatement(s) => {
-            statement_collect_typed_dispatcher_slices(&s.body, source, ctor_locals, out);
-            for s2 in statements_inside_function_expr(&s.test) {
-                statement_collect_typed_dispatcher_slices(s2, source, ctor_locals, out);
-            }
-        }
-        Statement::SwitchStatement(s) => {
-            // Round-13 #6: discriminant + per-case test expressions.
-            for s2 in statements_inside_function_expr(&s.discriminant) {
-                statement_collect_typed_dispatcher_slices(s2, source, ctor_locals, out);
-            }
-            for case in &s.cases {
-                if let Some(test) = &case.test {
-                    for s2 in statements_inside_function_expr(test) {
-                        statement_collect_typed_dispatcher_slices(s2, source, ctor_locals, out);
-                    }
-                }
-                for stmt in &case.consequent {
-                    statement_collect_typed_dispatcher_slices(stmt, source, ctor_locals, out);
-                }
-            }
-        }
-        Statement::TryStatement(s) => {
-            for stmt in &s.block.body {
-                statement_collect_typed_dispatcher_slices(stmt, source, ctor_locals, out);
-            }
-            if let Some(handler) = &s.handler {
-                for stmt in &handler.body.body {
-                    statement_collect_typed_dispatcher_slices(stmt, source, ctor_locals, out);
-                }
-            }
-            if let Some(finalizer) = &s.finalizer {
-                for stmt in &finalizer.body {
-                    statement_collect_typed_dispatcher_slices(stmt, source, ctor_locals, out);
-                }
-            }
-        }
-        Statement::LabeledStatement(s) => {
-            statement_collect_typed_dispatcher_slices(&s.body, source, ctor_locals, out);
-        }
-        _ => {}
-    }
 }
 
 /// Round-10 follow-up #2 / Round-11 follow-up #1: yield the body
@@ -1861,8 +1667,29 @@ pub fn collect_inline_typed_dispatcher_member_names(
     // sees the resolved literal.
     let literal_vars = collect_top_level_string_const_literals(program);
     let mut out = Vec::new();
+    let mut handle_var_decl = |decl: &oxc_ast::ast::VariableDeclaration<'_>| {
+        for d in &decl.declarations {
+            if !matches!(&d.id, BindingPattern::BindingIdentifier(_)) {
+                continue;
+            }
+            let Some(init) = &d.init else { continue };
+            expression_collect_inline_typed_members(init, &ctor_locals, &literal_vars, &mut out);
+        }
+    };
     for stmt in &program.body {
-        statement_collect_inline_typed_members(stmt, &ctor_locals, &literal_vars, &mut out);
+        crate::ast_walk::walk_statement_descend(stmt, &mut |node| match node {
+            crate::ast_walk::WalkNode::Statement(Statement::VariableDeclaration(decl)) => {
+                handle_var_decl(decl);
+            }
+            crate::ast_walk::WalkNode::Statement(Statement::ExportNamedDeclaration(ed)) => {
+                if let Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) = &ed.declaration
+                {
+                    handle_var_decl(decl);
+                }
+            }
+            crate::ast_walk::WalkNode::ForInitVarDecl(decl) => handle_var_decl(decl),
+            _ => {}
+        });
     }
     out
 }
@@ -1903,199 +1730,6 @@ fn collect_top_level_string_const_literals(
         }
     }
     out
-}
-
-/// Round-15 #1: shared body for the inline-typed-members walker's
-/// `Statement::VariableDeclaration` /
-/// `ExportNamedDeclaration(Declaration::VariableDeclaration)` arms.
-fn collect_inline_typed_members_from_var_decl(
-    decl: &oxc_ast::ast::VariableDeclaration<'_>,
-    ctor_locals: &std::collections::HashSet<String>,
-    literal_vars: &std::collections::HashMap<String, String>,
-    out: &mut Vec<String>,
-) {
-    for d in &decl.declarations {
-        if !matches!(&d.id, BindingPattern::BindingIdentifier(_)) {
-            continue;
-        }
-        let Some(init) = &d.init else { continue };
-        expression_collect_inline_typed_members(init, ctor_locals, literal_vars, out);
-        // Round-10 follow-up #2: recurse into function/arrow
-        // bodies used as initializers.
-        for s in statements_inside_function_expr(init) {
-            statement_collect_inline_typed_members(s, ctor_locals, literal_vars, out);
-        }
-    }
-}
-
-fn statement_collect_inline_typed_members(
-    stmt: &Statement<'_>,
-    ctor_locals: &std::collections::HashSet<String>,
-    literal_vars: &std::collections::HashMap<String, String>,
-    out: &mut Vec<String>,
-) {
-    // Round-10 follow-up #1: assigned VarDecl + recursion (mirrors
-    // `statement_collect_typed_dispatcher_slices` from round-9 #3).
-    match stmt {
-        Statement::VariableDeclaration(decl) => {
-            collect_inline_typed_members_from_var_decl(decl, ctor_locals, literal_vars, out);
-        }
-        Statement::FunctionDeclaration(fd) => {
-            if let Some(body) = &fd.body {
-                for s in &body.statements {
-                    statement_collect_inline_typed_members(s, ctor_locals, literal_vars, out);
-                }
-            }
-        }
-        // Round-15 #1: `export const x = …` / `export function …` —
-        // upstream walks the inner decl identically.
-        Statement::ExportNamedDeclaration(ed) => match &ed.declaration {
-            Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) => {
-                collect_inline_typed_members_from_var_decl(decl, ctor_locals, literal_vars, out);
-            }
-            Some(oxc_ast::ast::Declaration::FunctionDeclaration(fd)) => {
-                if let Some(body) = &fd.body {
-                    for s in &body.statements {
-                        statement_collect_inline_typed_members(s, ctor_locals, literal_vars, out);
-                    }
-                }
-            }
-            _ => {}
-        },
-        Statement::IfStatement(s) => {
-            // Round-14 #1: walk function-body stmts inside the
-            // if-test for typed dispatcher decls hidden in an IIFE.
-            for s2 in statements_inside_function_expr(&s.test) {
-                statement_collect_inline_typed_members(s2, ctor_locals, literal_vars, out);
-            }
-            statement_collect_inline_typed_members(&s.consequent, ctor_locals, literal_vars, out);
-            if let Some(alt) = &s.alternate {
-                statement_collect_inline_typed_members(alt, ctor_locals, literal_vars, out);
-            }
-        }
-        Statement::BlockStatement(b) => {
-            for s in &b.body {
-                statement_collect_inline_typed_members(s, ctor_locals, literal_vars, out);
-            }
-        }
-        Statement::ExpressionStatement(es) => {
-            for s in statements_inside_function_expr(&es.expression) {
-                statement_collect_inline_typed_members(s, ctor_locals, literal_vars, out);
-            }
-        }
-        // Round-12 #4 / Round-13 #6: control-flow recursion
-        // including loop headers and switch discriminants.
-        Statement::ForStatement(s) => {
-            if let Some(init) = &s.init {
-                use oxc_ast::ast::ForStatementInit;
-                match init {
-                    ForStatementInit::VariableDeclaration(decl) => {
-                        for d in &decl.declarations {
-                            if !matches!(&d.id, BindingPattern::BindingIdentifier(_)) {
-                                continue;
-                            }
-                            let Some(d_init) = &d.init else { continue };
-                            expression_collect_inline_typed_members(
-                                d_init,
-                                ctor_locals,
-                                literal_vars,
-                                out,
-                            );
-                            for s2 in statements_inside_function_expr(d_init) {
-                                statement_collect_inline_typed_members(
-                                    s2,
-                                    ctor_locals,
-                                    literal_vars,
-                                    out,
-                                );
-                            }
-                        }
-                    }
-                    other => {
-                        if let Some(expr) = other.as_expression() {
-                            for s2 in statements_inside_function_expr(expr) {
-                                statement_collect_inline_typed_members(
-                                    s2,
-                                    ctor_locals,
-                                    literal_vars,
-                                    out,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(test) = &s.test {
-                for s2 in statements_inside_function_expr(test) {
-                    statement_collect_inline_typed_members(s2, ctor_locals, literal_vars, out);
-                }
-            }
-            if let Some(update) = &s.update {
-                for s2 in statements_inside_function_expr(update) {
-                    statement_collect_inline_typed_members(s2, ctor_locals, literal_vars, out);
-                }
-            }
-            statement_collect_inline_typed_members(&s.body, ctor_locals, literal_vars, out);
-        }
-        Statement::ForInStatement(s) => {
-            for s2 in statements_inside_function_expr(&s.right) {
-                statement_collect_inline_typed_members(s2, ctor_locals, literal_vars, out);
-            }
-            statement_collect_inline_typed_members(&s.body, ctor_locals, literal_vars, out);
-        }
-        Statement::ForOfStatement(s) => {
-            for s2 in statements_inside_function_expr(&s.right) {
-                statement_collect_inline_typed_members(s2, ctor_locals, literal_vars, out);
-            }
-            statement_collect_inline_typed_members(&s.body, ctor_locals, literal_vars, out);
-        }
-        Statement::WhileStatement(s) => {
-            for s2 in statements_inside_function_expr(&s.test) {
-                statement_collect_inline_typed_members(s2, ctor_locals, literal_vars, out);
-            }
-            statement_collect_inline_typed_members(&s.body, ctor_locals, literal_vars, out);
-        }
-        Statement::DoWhileStatement(s) => {
-            statement_collect_inline_typed_members(&s.body, ctor_locals, literal_vars, out);
-            for s2 in statements_inside_function_expr(&s.test) {
-                statement_collect_inline_typed_members(s2, ctor_locals, literal_vars, out);
-            }
-        }
-        Statement::SwitchStatement(s) => {
-            for s2 in statements_inside_function_expr(&s.discriminant) {
-                statement_collect_inline_typed_members(s2, ctor_locals, literal_vars, out);
-            }
-            for case in &s.cases {
-                if let Some(test) = &case.test {
-                    for s2 in statements_inside_function_expr(test) {
-                        statement_collect_inline_typed_members(s2, ctor_locals, literal_vars, out);
-                    }
-                }
-                for stmt in &case.consequent {
-                    statement_collect_inline_typed_members(stmt, ctor_locals, literal_vars, out);
-                }
-            }
-        }
-        Statement::TryStatement(s) => {
-            for stmt in &s.block.body {
-                statement_collect_inline_typed_members(stmt, ctor_locals, literal_vars, out);
-            }
-            if let Some(handler) = &s.handler {
-                for stmt in &handler.body.body {
-                    statement_collect_inline_typed_members(stmt, ctor_locals, literal_vars, out);
-                }
-            }
-            if let Some(finalizer) = &s.finalizer {
-                for stmt in &finalizer.body {
-                    statement_collect_inline_typed_members(stmt, ctor_locals, literal_vars, out);
-                }
-            }
-        }
-        Statement::LabeledStatement(s) => {
-            statement_collect_inline_typed_members(&s.body, ctor_locals, literal_vars, out);
-        }
-        _ => {}
-    }
 }
 
 fn expression_collect_inline_typed_members(
@@ -2171,187 +1805,48 @@ fn expression_collect_inline_typed_members(
 /// make events.hasEvents() upstream and disqualify fn-shape.
 pub fn has_inline_typed_dispatcher_members(program: &oxc_ast::ast::Program<'_>) -> bool {
     let ctor_locals = collect_ctor_locals(program);
-    program
-        .body
-        .iter()
-        .any(|s| statement_has_inline_typed_dispatcher(s, &ctor_locals))
-}
-
-/// Round-15 #1: shared body for the inline-typed-dispatcher
-/// boolean walker's `Statement::VariableDeclaration` /
-/// `ExportNamedDeclaration(Declaration::VariableDeclaration)` arms.
-fn var_decl_has_inline_typed_dispatcher(
-    decl: &oxc_ast::ast::VariableDeclaration<'_>,
-    ctor_locals: &std::collections::HashSet<String>,
-) -> bool {
-    decl.declarations.iter().any(|d| {
-        if !matches!(&d.id, BindingPattern::BindingIdentifier(_)) {
-            return false;
-        }
-        let Some(init) = &d.init else { return false };
-        if expression_has_inline_typed_dispatcher(init, ctor_locals) {
+    let mut found = false;
+    let check_var_decl = |decl: &oxc_ast::ast::VariableDeclaration<'_>| -> bool {
+        decl.declarations.iter().any(|d| {
+            if !matches!(&d.id, BindingPattern::BindingIdentifier(_)) {
+                return false;
+            }
+            let Some(init) = &d.init else { return false };
+            expression_has_inline_typed_dispatcher(init, &ctor_locals)
+        })
+    };
+    for stmt in &program.body {
+        crate::ast_walk::walk_statement_descend(stmt, &mut |node| {
+            if found {
+                return;
+            }
+            match node {
+                crate::ast_walk::WalkNode::Statement(Statement::VariableDeclaration(decl)) => {
+                    if check_var_decl(decl) {
+                        found = true;
+                    }
+                }
+                crate::ast_walk::WalkNode::Statement(Statement::ExportNamedDeclaration(ed)) => {
+                    if let Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) =
+                        &ed.declaration
+                        && check_var_decl(decl)
+                    {
+                        found = true;
+                    }
+                }
+                crate::ast_walk::WalkNode::ForInitVarDecl(decl) => {
+                    if check_var_decl(decl) {
+                        found = true;
+                    }
+                }
+                _ => {}
+            }
+        });
+        if found {
             return true;
         }
-        // Round-10 follow-up #2: recurse into function/arrow body.
-        statements_inside_function_expr(init)
-            .iter()
-            .any(|s| statement_has_inline_typed_dispatcher(s, ctor_locals))
-    })
-}
-
-fn statement_has_inline_typed_dispatcher(
-    stmt: &Statement<'_>,
-    ctor_locals: &std::collections::HashSet<String>,
-) -> bool {
-    // Round-10 follow-up #1: same "assigned VarDecl + recursion" rule
-    // as round-9 #3's `statement_collect_typed_dispatcher_slices`.
-    // Bare `createEventDispatcher<{x:string}>()` ExpressionStatements
-    // don't reach upstream's `setEventDispatcher`, so they shouldn't
-    // make `events.hasEvents()` true; nested declarations under
-    // function/block/if bodies should.
-    match stmt {
-        Statement::VariableDeclaration(decl) => {
-            var_decl_has_inline_typed_dispatcher(decl, ctor_locals)
-        }
-        Statement::FunctionDeclaration(fd) => fd.body.as_ref().is_some_and(|body| {
-            body.statements
-                .iter()
-                .any(|s| statement_has_inline_typed_dispatcher(s, ctor_locals))
-        }),
-        // Round-15 #1: `export const x = …` / `export function …` —
-        // upstream walks the inner decl identically.
-        Statement::ExportNamedDeclaration(ed) => match &ed.declaration {
-            Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) => {
-                var_decl_has_inline_typed_dispatcher(decl, ctor_locals)
-            }
-            Some(oxc_ast::ast::Declaration::FunctionDeclaration(fd)) => {
-                fd.body.as_ref().is_some_and(|body| {
-                    body.statements
-                        .iter()
-                        .any(|s| statement_has_inline_typed_dispatcher(s, ctor_locals))
-                })
-            }
-            _ => false,
-        },
-        Statement::IfStatement(s) => {
-            // Round-14 #1: a typed dispatcher hidden in an IIFE used
-            // as the if-test condition counts.
-            statements_inside_function_expr(&s.test)
-                .iter()
-                .any(|s2| statement_has_inline_typed_dispatcher(s2, ctor_locals))
-                || statement_has_inline_typed_dispatcher(&s.consequent, ctor_locals)
-                || s.alternate
-                    .as_ref()
-                    .is_some_and(|a| statement_has_inline_typed_dispatcher(a, ctor_locals))
-        }
-        Statement::BlockStatement(b) => b
-            .body
-            .iter()
-            .any(|s| statement_has_inline_typed_dispatcher(s, ctor_locals)),
-        Statement::ExpressionStatement(es) => statements_inside_function_expr(&es.expression)
-            .iter()
-            .any(|s| statement_has_inline_typed_dispatcher(s, ctor_locals)),
-        // Round-12 #4 / Round-13 #6: control-flow recursion
-        // including loop headers and switch discriminants.
-        Statement::ForStatement(s) => {
-            let init_has = if let Some(init) = &s.init {
-                use oxc_ast::ast::ForStatementInit;
-                match init {
-                    ForStatementInit::VariableDeclaration(decl) => {
-                        decl.declarations.iter().any(|d| {
-                            if !matches!(&d.id, BindingPattern::BindingIdentifier(_)) {
-                                return false;
-                            }
-                            let Some(d_init) = &d.init else { return false };
-                            expression_has_inline_typed_dispatcher(d_init, ctor_locals)
-                                || statements_inside_function_expr(d_init).iter().any(|s2| {
-                                    statement_has_inline_typed_dispatcher(s2, ctor_locals)
-                                })
-                        })
-                    }
-                    other => other.as_expression().is_some_and(|expr| {
-                        statements_inside_function_expr(expr)
-                            .iter()
-                            .any(|s2| statement_has_inline_typed_dispatcher(s2, ctor_locals))
-                    }),
-                }
-            } else {
-                false
-            };
-            init_has
-                || s.test.as_ref().is_some_and(|t| {
-                    statements_inside_function_expr(t)
-                        .iter()
-                        .any(|s2| statement_has_inline_typed_dispatcher(s2, ctor_locals))
-                })
-                || s.update.as_ref().is_some_and(|u| {
-                    statements_inside_function_expr(u)
-                        .iter()
-                        .any(|s2| statement_has_inline_typed_dispatcher(s2, ctor_locals))
-                })
-                || statement_has_inline_typed_dispatcher(&s.body, ctor_locals)
-        }
-        Statement::ForInStatement(s) => {
-            statements_inside_function_expr(&s.right)
-                .iter()
-                .any(|s2| statement_has_inline_typed_dispatcher(s2, ctor_locals))
-                || statement_has_inline_typed_dispatcher(&s.body, ctor_locals)
-        }
-        Statement::ForOfStatement(s) => {
-            statements_inside_function_expr(&s.right)
-                .iter()
-                .any(|s2| statement_has_inline_typed_dispatcher(s2, ctor_locals))
-                || statement_has_inline_typed_dispatcher(&s.body, ctor_locals)
-        }
-        Statement::WhileStatement(s) => {
-            statements_inside_function_expr(&s.test)
-                .iter()
-                .any(|s2| statement_has_inline_typed_dispatcher(s2, ctor_locals))
-                || statement_has_inline_typed_dispatcher(&s.body, ctor_locals)
-        }
-        Statement::DoWhileStatement(s) => {
-            statement_has_inline_typed_dispatcher(&s.body, ctor_locals)
-                || statements_inside_function_expr(&s.test)
-                    .iter()
-                    .any(|s2| statement_has_inline_typed_dispatcher(s2, ctor_locals))
-        }
-        Statement::SwitchStatement(s) => {
-            statements_inside_function_expr(&s.discriminant)
-                .iter()
-                .any(|s2| statement_has_inline_typed_dispatcher(s2, ctor_locals))
-                || s.cases.iter().any(|case| {
-                    case.test.as_ref().is_some_and(|t| {
-                        statements_inside_function_expr(t)
-                            .iter()
-                            .any(|s2| statement_has_inline_typed_dispatcher(s2, ctor_locals))
-                    }) || case
-                        .consequent
-                        .iter()
-                        .any(|stmt| statement_has_inline_typed_dispatcher(stmt, ctor_locals))
-                })
-        }
-        Statement::TryStatement(s) => {
-            s.block
-                .body
-                .iter()
-                .any(|stmt| statement_has_inline_typed_dispatcher(stmt, ctor_locals))
-                || s.handler.as_ref().is_some_and(|h| {
-                    h.body
-                        .body
-                        .iter()
-                        .any(|stmt| statement_has_inline_typed_dispatcher(stmt, ctor_locals))
-                })
-                || s.finalizer.as_ref().is_some_and(|f| {
-                    f.body
-                        .iter()
-                        .any(|stmt| statement_has_inline_typed_dispatcher(stmt, ctor_locals))
-                })
-        }
-        Statement::LabeledStatement(s) => {
-            statement_has_inline_typed_dispatcher(&s.body, ctor_locals)
-        }
-        _ => false,
     }
+    false
 }
 
 fn expression_has_inline_typed_dispatcher(

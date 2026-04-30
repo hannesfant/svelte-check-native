@@ -8,9 +8,7 @@
 //! land its descent fix in two places. Keeping the recursion in one
 //! module means a new oxc enum variant only adds one match arm, not seven.
 
-use oxc_ast::ast::{
-    Declaration, Expression, ForStatementInit, Statement, VariableDeclaration,
-};
+use oxc_ast::ast::{Declaration, Expression, ForStatementInit, Statement, VariableDeclaration};
 
 /// Walk an expression looking for nested function/arrow bodies — including
 /// those passed as call arguments (`setTimeout(() => { … })`) and reachable
