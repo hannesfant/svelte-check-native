@@ -34,6 +34,7 @@
 // Tests are allowed to panic loudly on setup failures.
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
+pub mod ast_walk;
 pub mod dom_binding;
 pub mod jsdoc;
 pub mod model;
@@ -46,6 +47,7 @@ pub mod template_scope;
 pub mod template_walker;
 pub mod void_refs;
 
+pub use ast_walk::collect_function_body_stmts;
 pub use jsdoc::{
     scan_jsdoc_props_typedef_keys, scan_jsdoc_typedef_name, should_synthesise_js_props,
 };
