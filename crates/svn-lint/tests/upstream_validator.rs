@@ -321,6 +321,33 @@ fn upstream_validator_fixtures() {
         );
     }
 
+    if let Ok(path) = std::env::var("LINT_COVERAGE_REPORT") {
+        let mut module_only = skipped_module_mode.clone();
+        module_only.sort();
+        let mut compile_option_gated = skipped_compile_options.clone();
+        compile_option_gated.sort();
+        let mut unported_code = skipped_unported_code.clone();
+        unported_code.sort();
+        let report = serde_json::json!({
+            "submodule_sha": std::env::var("SVELTE_UPSTREAM_SHA").unwrap_or_default(),
+            "total_with_warnings_json": total,
+            "enforced": enforced,
+            "passing": passing,
+            "failing": enforced - passing,
+            "skipped": {
+                "module_only": module_only,
+                "compile_option_gated": compile_option_gated,
+                "unported_code": unported_code,
+            },
+            "ported_codes": ported.iter().copied().collect::<Vec<_>>(),
+            "uncovered_codes": uncovered,
+        });
+        let pretty = serde_json::to_string_pretty(&report).unwrap();
+        fs::write(&path, format!("{pretty}\n"))
+            .unwrap_or_else(|e| panic!("failed to write coverage report to {path}: {e}"));
+        eprintln!("  wrote coverage report → {path}");
+    }
+
     assert!(
         failures.is_empty(),
         "{} failures among {} enforced fixtures:\n\n{}",

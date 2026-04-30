@@ -362,6 +362,19 @@ five platform binaries (`-darwin-arm64`, `-darwin-x64`,
 `scripts/prepare-release.mjs` keeps the six `package.json` versions
 and pins in lockstep — always re-run after any version bump.
 
+**Pre-bump diagnostic-coverage snapshot.** Before bumping the
+version, capture the upstream-validator parity scoreboard so the
+release notes include the lint-pass coverage delta:
+
+```sh
+SHA=$(git -C .svelte-upstream/svelte rev-parse HEAD)
+LINT_COVERAGE_REPORT=/tmp/lint-coverage.json \
+  SVELTE_UPSTREAM_SHA=$SHA \
+  cargo test -p svn-lint --test upstream_validator -- --nocapture
+# Eyeball /tmp/lint-coverage.json — paste the {enforced, passing,
+# skipped buckets} into notes/BENCH.md's release-time entry.
+```
+
 **Bump:** update `Cargo.toml` `[workspace.package].version` and root
 `package.json` `version` (must match), add a `CHANGELOG.md` entry,
 commit as `release: vX.Y.Z`.
