@@ -2162,9 +2162,21 @@ fn collect_instantiation_inner(
                 });
             }
             Attribute::Shorthand(s) => {
+                // R-Conv #19 (D-ii fix #3): anchor 2353 / 2322 on the
+                // NAME (`o` of `{only_bind}`), not the opening brace.
+                // Upstream LS's reverse-map for `<Foo {only_bind} />`
+                // points at the prop name's first byte — matches
+                // `bindings` fixture line 28 col 8 vs ours pre-fix
+                // col 7.
+                let inner = source
+                    .get(s.range.start as usize + 1..s.range.end as usize)
+                    .unwrap_or("");
+                let leading_ws = (inner.len() - inner.trim_start().len()) as u32;
+                let name_start = s.range.start + 1 + leading_ws;
+                let name_end = name_start + s.name.len() as u32;
                 props.push(PropShape::Shorthand {
                     name: s.name.clone(),
-                    attr_range: s.range,
+                    attr_range: svn_core::Range::new(name_start, name_end),
                 });
             }
             Attribute::Directive(d) => {
@@ -2364,9 +2376,18 @@ fn collect_instantiation_inner(
                     // Bare `bind:NAME` is `bind:NAME={NAME}` — same
                     // widening trailer as the explicit form.
                     component_bind_widen_targets.push(target.clone());
+                    // R-Conv #19 (D-ii fix #3): anchor diagnostics on
+                    // the NAME, not the `bind:` prefix. Mirrors the
+                    // explicit-expression arm at line 2324 — upstream
+                    // LS's reverse-map points at the prop name (e.g.
+                    // `bindings` fixture line 27 col 12 = `o` of
+                    // `only_bind`, not col 7 = `b` of `bind:`).
+                    let name_start = d.range.start + d.kind.prefix_len_with_colon();
+                    let name_end = name_start + target.len() as u32;
+                    let name_range = svn_core::Range::new(name_start, name_end);
                     props.push(PropShape::Shorthand {
                         name: target,
-                        attr_range: d.range,
+                        attr_range: name_range,
                     });
                     continue;
                 }
