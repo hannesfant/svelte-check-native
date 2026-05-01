@@ -116,7 +116,6 @@ const SKIP_LIST = {
     'actions-animations-transitions-typechecks': 'overlay-counts: 2345 expected 2×, ours 0×',
     'bindings': 'overlay-counts: 2322/2339/2353 multiset diverges',
     'component-invalid': 'overlay-counts: 2322/2345 missing, 2353/2554 extra',
-    'element-events': 'overlay-counts: 2339/2353 missing, 7006 extra',
     // svelte-native expects the svelteNative.JSX namespace switch (jsxFactory:
     // "svelteNative" + svelteOptions.namespace = "svelteNative.JSX") so element
     // attribute checks degrade to the catch-all `[name: string]: { [name: string]: any }`
