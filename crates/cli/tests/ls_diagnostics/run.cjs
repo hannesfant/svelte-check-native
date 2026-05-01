@@ -86,7 +86,7 @@ const SKIP_LIST = {
     'project-reference': 'upstream-root tsconfig excludes — project-references mode',
 
     // bucket=alt-language
-    'pug': 'alt-language: <script lang="pug"> support gap — TS2339 leak',
+    // (was 'pug' here — closed by R-Conv #20 B2 #1, isNoPugFalsePositive port)
 
     // bucket=missing-code
     '$$events': 'missing-code: 6385/6387 deprecation hints not surfaced',

@@ -47,6 +47,13 @@ pub struct MapData {
     /// start and non-overlapping (each `ignore_start` pairs with the
     /// NEXT `ignore_end`).
     pub ignore_regions: Vec<(u32, u32)>,
+    /// Source byte-offset ranges of top-level `<template lang="pug">…
+    /// </template>` containers. Mirrors upstream's
+    /// `isNoPugFalsePositive` gate: diagnostics whose post-translation
+    /// byte position falls inside any of these are dropped in
+    /// `map_diagnostic` (with TS6133/6192/6196 as the only exceptions
+    /// that still surface). Empty for non-pug Svelte files.
+    pub pug_template_ranges: Vec<(u32, u32)>,
 }
 
 /// One file to type-check.

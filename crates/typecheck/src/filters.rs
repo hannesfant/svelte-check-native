@@ -267,6 +267,75 @@ pub fn scan_ignore_regions(overlay_text: &str) -> Vec<(u32, u32)> {
     regions
 }
 
+/// Scan `source_text` for top-level `<template lang="pug">…</template>`
+/// container ranges. Mirrors upstream's `extractTemplateTag` +
+/// `isRangeInTag(range, document.templateInfo)` filter at
+/// `language-server/src/plugins/typescript/features/DiagnosticsProvider.ts:391-401`,
+/// gated on `usesPug = document.getLanguageAttribute('template') ===
+/// 'pug'`.
+///
+/// Each returned `(start, end)` is the byte range of the entire
+/// `<template ...>...</template>` container — diagnostics whose source
+/// position falls inside drop in `map_diagnostic`, with `6133`
+/// (NEVER_READ) and `6192` / `6196` (ALL_IMPORTS_UNUSED) as exceptions
+/// that always surface (matching upstream's `isNoPugFalsePositive`).
+///
+/// The scan is intentionally narrow: it only matches a top-level
+/// `<template>` element and only when the `lang` attr is literally
+/// `pug`. Other template-tag idioms (`lang="markup"`, no `lang`,
+/// custom `lang` values) never produce a suppression range — so a
+/// stray `<template>` in the middle of a component's markup still
+/// type-checks normally.
+pub fn scan_pug_template_ranges(source_text: &str) -> Vec<(u32, u32)> {
+    let bytes = source_text.as_bytes();
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    let mut cursor: usize = 0;
+    let open = b"<template";
+    let close = b"</template>";
+    while let Some(rel) = find_subslice(&bytes[cursor..], open) {
+        let tag_start = cursor + rel;
+        let after_open = tag_start + open.len();
+        // Reject `<templateX...` (identifier continuation) — only
+        // accept `<template ` / `<template>` / `<template/`.
+        let next = bytes.get(after_open).copied();
+        if !matches!(next, Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') | Some(b'>') | Some(b'/'))
+        {
+            cursor = after_open;
+            continue;
+        }
+        let Some(rel_gt) = bytes[after_open..].iter().position(|&b| b == b'>') else {
+            break;
+        };
+        let open_end = after_open + rel_gt + 1;
+        let attrs = &source_text[after_open..open_end - 1];
+        let attrs_compact: String = attrs.split_whitespace().collect::<Vec<_>>().join("");
+        let is_pug = attrs_compact.contains("lang=\"pug\"")
+            || attrs_compact.contains("lang='pug'")
+            || attrs_compact.contains("lang=pug");
+        if !is_pug {
+            cursor = open_end;
+            continue;
+        }
+        let Some(rel_close) = find_subslice(&bytes[open_end..], close) else {
+            out.push((tag_start as u32, bytes.len() as u32));
+            break;
+        };
+        let close_end = open_end + rel_close + close.len();
+        out.push((tag_start as u32, close_end as u32));
+        cursor = close_end;
+    }
+    out
+}
+
+/// True when `byte_offset` falls inside any pug-template container
+/// range. Used to drop diagnostics inside `<template lang="pug">`
+/// bodies (mirrors upstream's `isNoPugFalsePositive`).
+pub fn is_in_pug_template(ranges: &[(u32, u32)], byte_offset: u32) -> bool {
+    ranges
+        .iter()
+        .any(|&(start, end)| byte_offset >= start && byte_offset < end)
+}
+
 /// `memmem`-style byte-slice search. Rust stdlib doesn't expose this
 /// for byte slices so we roll a small one. Linear in haystack size,
 /// which is fine for overlay files (~hundreds of KB at most).

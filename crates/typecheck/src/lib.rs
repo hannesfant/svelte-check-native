@@ -405,6 +405,7 @@ pub fn check(
             }
             InputKind::KitFile | InputKind::UserTsOverlay => input.generated_ts.clone(),
         };
+        let pug_template_ranges = filters::scan_pug_template_ranges(&source_text);
         let overlay_text = std::mem::take(&mut input.generated_ts);
         map_data.insert(
             gen_path.clone(),
@@ -417,6 +418,7 @@ pub fn check(
                 source_text,
                 identity_map: matches!(input.kind, InputKind::KitFile | InputKind::UserTsOverlay),
                 ignore_regions,
+                pug_template_ranges,
             },
         );
         // Only in-scope Svelte files + Kit overlays land in the
@@ -618,7 +620,31 @@ fn map_diagnostic(
                 return None;
             }
             match position::translate_position(data, raw.line, raw.column) {
-                Some((mapped_line, mapped_col)) => (orig, mapped_line, mapped_col),
+                Some((mapped_line, mapped_col)) => {
+                    // R-Conv #20 (B2 #1): drop diagnostics inside
+                    // `<template lang="pug">…</template>` containers.
+                    // Mirrors upstream LS's `isNoPugFalsePositive`
+                    // (DiagnosticsProvider.ts:391-401): pug bodies
+                    // type-check via the same overlay walker upstream
+                    // svelte2tsx uses for HTML markup, but pug is a
+                    // different syntax (indent-based). Suppress every
+                    // resulting diagnostic except `6133` (NEVER_READ)
+                    // and `6192` / `6196` (ALL_IMPORTS_UNUSED) which
+                    // are script-side hints upstream allows through.
+                    if !data.pug_template_ranges.is_empty()
+                        && !matches!(raw.code, 6133 | 6192 | 6196)
+                        && let Some(byte) = position::position_to_byte(
+                            &data.source_line_starts,
+                            &data.source_text,
+                            mapped_line,
+                            mapped_col,
+                        )
+                        && filters::is_in_pug_template(&data.pug_template_ranges, byte)
+                    {
+                        return None;
+                    }
+                    (orig, mapped_line, mapped_col)
+                }
                 None => return None,
             }
         }
