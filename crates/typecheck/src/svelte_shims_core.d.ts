@@ -856,6 +856,37 @@ declare function __svn_ensure_action<T extends __SvnActionReturnType>(
 ): T extends { $$_attributes?: any } ? T['$$_attributes'] : {};
 
 /**
+ * Transition-directive return shape — matches Svelte's
+ * `TransitionConfig` (or a thunk producing one). Mirrors upstream's
+ * `__sveltets_2_SvelteTransitionReturnType` at
+ * `language-tools/packages/svelte2tsx/svelte-shims-v4.d.ts:175-176`.
+ */
+type __SvnTransitionConfig = {
+    delay?: number;
+    duration?: number;
+    easing?: (t: number) => number;
+    css?: (t: number, u: number) => string;
+    tick?: (t: number, u: number) => void;
+};
+type __SvnTransitionReturnType = __SvnTransitionConfig | (() => __SvnTransitionConfig);
+
+/**
+ * Wraps a `transition:` / `in:` / `out:` directive invocation —
+ * `transitionFn(element, params)` — so its return value type-checks
+ * against `TransitionConfig`. The wrapper is also the syntactic
+ * anchor the diagnostic post-filter
+ * (`crates/typecheck/src/filters.rs::is_overlay_in_ensure_transition_call`)
+ * uses to drop TS2554 "Expected 3 arguments" — Svelte's transition
+ * runtime supplies the optional 3rd `_context` parameter, but tsgo
+ * fires 2554 when the user's transition function declares it as
+ * required and we only pass 2 args at the synthetic call site. Mirrors
+ * upstream's `__sveltets_2_ensureTransition` + the
+ * `expectedTransitionThirdArgument` filter at
+ * `language-server/src/plugins/typescript/features/DiagnosticsProvider.ts:663-700`.
+ */
+declare function __svn_ensure_transition(transitionCall: __SvnTransitionReturnType): {};
+
+/**
  * Intersect up to N action-return-attributes types so they flow
  * through `svelteHTML.createElement("tag", actions, attrs)`'s 3-arg
  * overload. Upstream `svelte2tsx` emits this as `__sveltets_2_union`;

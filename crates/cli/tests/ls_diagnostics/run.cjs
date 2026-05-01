@@ -135,7 +135,6 @@ const SKIP_LIST = {
     'snippet-js.v5': 'overlay-counts: 2345/2367 missing',
     'strictEvents': 'overlay-counts: 2345 missing',
     'svelte-element': 'overlay-counts: 2353 missing, 2322/2741/7006 extra',
-    'transition-options': 'overlay-counts: extra 2554',
 
     // bucket=position-drift was here. All three entries
     // (`$store-bind`, `script-boolean-not-assignable-to-string`,

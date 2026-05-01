@@ -3,11 +3,11 @@
 async function $$render_7737f456() {
     ;(async () => {
         // template type-check body (incremental)
-        { svelteHTML.createElement("h1", {});             (blink(__svn_map_element_tag('h1')));
+        { svelteHTML.createElement("h1", {});             __svn_ensure_transition(blink(__svn_map_element_tag('h1')));
         }
-        { svelteHTML.createElement("h1", {});             (blink(__svn_map_element_tag('h1')));
+        { svelteHTML.createElement("h1", {});             __svn_ensure_transition(blink(__svn_map_element_tag('h1')));
         }
-        { svelteHTML.createElement("h1", {});             (blink(__svn_map_element_tag('h1')));
+        { svelteHTML.createElement("h1", {});             __svn_ensure_transition(blink(__svn_map_element_tag('h1')));
         }
     });
     return { props: /** @type {any} */({}) };

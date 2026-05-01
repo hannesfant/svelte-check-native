@@ -178,6 +178,63 @@ pub(crate) fn is_in_ignore_region(regions: &[(u32, u32)], offset: u32) -> bool {
         .any(|&(start, end)| offset >= start && offset < end)
 }
 
+/// Does the diagnostic at `offset` fall inside an
+/// `__svn_ensure_transition(...)` call? Used to drop TS2554
+/// "Expected N arguments" — emit wraps every `transition:` /
+/// `in:` / `out:` directive call in `__svn_ensure_transition(...)`
+/// to give tsgo a typed signature, but the inner user function
+/// (e.g. `myTransition(node, params, context)`) declares the
+/// optional 3rd `_context` parameter as required and tsgo fires
+/// 2554 because we only pass 2 args at the synthetic call site.
+/// Svelte's transition runtime supplies the 3rd arg at runtime —
+/// the user's source is correct, the synthetic 2-arg call site is
+/// the artefact.
+///
+/// Mirrors upstream svelte-check's `expectedTransitionThirdArgument`
+/// filter at
+/// `language-tools/packages/language-server/src/plugins/typescript/features/DiagnosticsProvider.ts:663-700`.
+/// The upstream filter consults the language service to confirm the
+/// inner call's signature has exactly 3 non-optional parameters.
+/// We don't have a TS language service in our pipeline, so the check
+/// here is structural: if the bytes immediately preceding `offset`
+/// (after walking back through identifier characters) end with
+/// `__svn_ensure_transition(`, the diagnostic originates inside the
+/// wrapper. Less precise than upstream's signature lookup, but the
+/// false-positive surface is narrow — `__svn_ensure_transition` only
+/// wraps user-supplied transition function calls, and a user's
+/// function deliberately declared with > 3 params would fire TS2554
+/// either way (the 3-arg shape is the runtime contract).
+pub(crate) fn is_overlay_in_ensure_transition_call(overlay: &str, offset: u32) -> bool {
+    const PREFIX: &[u8] = b"__svn_ensure_transition(";
+    let bytes = overlay.as_bytes();
+    let mut cursor = offset as usize;
+    if cursor > bytes.len() {
+        return false;
+    }
+    // Walk back through any identifier / whitespace characters
+    // to find the start of the inner callee identifier. tsgo's
+    // TS2554 may point at the function name (TypeScript >=5.4) or
+    // at the open paren of the inner call.
+    while cursor > 0 {
+        let prev = bytes[cursor - 1];
+        if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'$' {
+            cursor -= 1;
+        } else {
+            break;
+        }
+    }
+    // Skip optional whitespace between the wrapper's `(` and the
+    // inner identifier (cosmetic — emit doesn't insert any, but
+    // future-proof against a formatter run).
+    while cursor > 0 && bytes[cursor - 1].is_ascii_whitespace() {
+        cursor -= 1;
+    }
+    if cursor < PREFIX.len() {
+        return false;
+    }
+    &bytes[cursor - PREFIX.len()..cursor] == PREFIX
+}
+
 /// Scan `overlay_text` for [`IGNORE_START_MARKER`] / [`IGNORE_END_MARKER`]
 /// pairs and return their byte-offset ranges in the overlay.
 ///

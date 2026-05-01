@@ -22,9 +22,9 @@ async function $$render_b5ddc729() {
         /** @type {any} */ let __svn_action_attrs_0 = {};
         void __svn_action_attrs_0;
             const __svn_action_0 = __svn_ensure_action($actionStore(__svn_map_element_tag('div')));
-        { svelteHTML.createElement("div", __svn_union(__svn_action_0), {});             ($transitionStore(__svn_map_element_tag('div'), ({ y: 100 })));
-            ($inStore(__svn_map_element_tag('div')));
-            ($outStore(__svn_map_element_tag('div')));
+        { svelteHTML.createElement("div", __svn_union(__svn_action_0), {});             __svn_ensure_transition($transitionStore(__svn_map_element_tag('div'), ({ y: 100 })));
+            __svn_ensure_transition($inStore(__svn_map_element_tag('div')));
+            __svn_ensure_transition($outStore(__svn_map_element_tag('div')));
             ($animateStore(__svn_map_element_tag('div'), __svn_AnimationMove));
             void __svn_action_0;
         }

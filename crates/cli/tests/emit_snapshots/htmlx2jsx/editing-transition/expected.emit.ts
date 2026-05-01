@@ -3,7 +3,7 @@
 async function $$render_34355e12() {
     ;(async () => {
         // template type-check body (incremental)
-        { svelteHTML.createElement("div", {});             (fade(__svn_map_element_tag('div'), (option.)));
+        { svelteHTML.createElement("div", {});             __svn_ensure_transition(fade(__svn_map_element_tag('div'), (option.)));
         }
     });
     return { props: /** @type {any} */({}) };

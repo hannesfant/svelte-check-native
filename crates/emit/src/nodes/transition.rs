@@ -4,22 +4,27 @@
 //! Mirrors upstream svelte2tsx's
 //! `language-tools/packages/svelte2tsx/src/htmlxtojsx_v2/nodes/Transition.ts`.
 //!
-//! Upstream emits a typed call wrapped in
-//! `__sveltets_2_ensureTransition(...)`:
+//! Emits a typed call wrapped in `__svn_ensure_transition(...)`:
 //!
 //! ```text
-//!     __sveltets_2_ensureTransition(
-//!         NAME(svelte.mapElementTag('tag'), (PARAMS))
+//!     __svn_ensure_transition(
+//!         NAME(__svn_map_element_tag('tag'), (PARAMS))
 //!     );
 //! ```
 //!
+//! The wrapper is what gives upstream's diagnostic post-filter
+//! (`expectedTransitionThirdArgument` in
+//! `language-tools/packages/language-server/src/plugins/typescript/
+//! features/DiagnosticsProvider.ts:663-700`) a syntactic anchor: TS2554
+//! "Expected 3 arguments" fires on the inner `NAME(...)` call when the
+//! user's transition function takes the optional `_context` 3rd
+//! parameter (Svelte's transition runtime supplies it; user code
+//! rarely declares it). The post-filter (in
+//! `crates/typecheck/src/filters.rs::is_overlay_in_ensure_transition_call`)
+//! drops the 2554 when it originates inside `__svn_ensure_transition(...)`.
+//!
 //! All three directive variants (`transition:` / `in:` / `out:`) share
 //! the same call shape and route to the same handler.
-//!
-//! We emit the bare call (no `__svn_ensure_transition` wrapper yet —
-//! same trade-off as `animation.rs`). The bare emit covers TS2304 /
-//! TS2554 / TS2345 by letting tsgo type-check NAME's signature
-//! against the call.
 
 use std::fmt::Write;
 
@@ -60,7 +65,7 @@ pub(crate) fn emit_transition_directive(
                 return;
             };
             buf.push_str(indent);
-            buf.push_str("(");
+            buf.push_str("__svn_ensure_transition(");
             buf.append_with_source(name, name_range);
             let _ = write!(buf, "(__svn_map_element_tag({tag_arg}), (");
             buf.append_with_source(params, *expression_range);
@@ -70,7 +75,7 @@ pub(crate) fn emit_transition_directive(
             // Bare `transition:fade` (no params expression). Params
             // slot is optional in Svelte's transition signature.
             buf.push_str(indent);
-            buf.push_str("(");
+            buf.push_str("__svn_ensure_transition(");
             buf.append_with_source(name, name_range);
             let _ = writeln!(buf, "(__svn_map_element_tag({tag_arg})));");
         }

@@ -6,7 +6,7 @@ async function $$render_84285497() {
                                              
     ;(async () => {
         // template type-check body (incremental)
-        { svelteHTML.createElement("div", {});             (fade(__svn_map_element_tag('div'), ({ duration: 'not-a-number' })));
+        { svelteHTML.createElement("div", {});             __svn_ensure_transition(fade(__svn_map_element_tag('div'), ({ duration: 'not-a-number' })));
         }
         { svelteHTML.createElement("div", {});             (undefinedAnim(__svn_map_element_tag('div'), __svn_AnimationMove));
         }

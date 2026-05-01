@@ -549,6 +549,21 @@ fn map_diagnostic(
             {
                 return None;
             }
+            // Drop TS2554 ("Expected N arguments") when the diagnostic
+            // originates inside `__svn_ensure_transition(...)`. The
+            // wrapper synthesises a 2-arg call to the user's transition
+            // function; if the user declared the optional 3rd
+            // `_context` parameter as required, tsgo fires 2554 even
+            // though Svelte's runtime supplies the 3rd arg. Mirrors
+            // upstream svelte-check's `expectedTransitionThirdArgument`
+            // filter at `language-server/src/plugins/typescript/
+            // features/DiagnosticsProvider.ts:663-700`.
+            if raw.code == 2554
+                && let Some(offset) = position::overlay_byte_offset(data, raw.line, raw.column)
+                && filters::is_overlay_in_ensure_transition_call(&data.overlay_text, offset)
+            {
+                return None;
+            }
             match position::translate_position(data, raw.line, raw.column) {
                 Some((mapped_line, mapped_col)) => (orig, mapped_line, mapped_col),
                 None => return None,
