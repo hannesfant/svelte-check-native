@@ -1534,9 +1534,177 @@ declare module 'svelte/legacy' {
 }
 
 declare module 'svelte/elements' {
-    export type HTMLAttributes<T extends EventTarget = HTMLElement> = any;
-    export type SVGAttributes<T extends EventTarget = SVGElement> = any;
-    export type DOMAttributes<T extends EventTarget = Element> = any;
+    // Closed `HTMLAttributes` shape: standard HTML attrs plus index
+    // signatures for `data-*` / `aria-*` and Svelte directive prefixes
+    // (`on:*` / `bind:*` / `class:*` / `style:*` / `transition:*` /
+    // `in:*` / `out:*` / `animate:*` / `use:*`). Our overlay emits
+    // directives as object-literal keys (e.g. `{ "on:click": fn }`),
+    // so the directive prefixes need explicit allowance to avoid 2353
+    // on legitimate sites. Unknown attributes (no prefix match, no
+    // declared property) fire 2353 — this is what unblocks the
+    // upstream LS `element-attributes` fixture.
+    //
+    // Real Svelte's `svelte/elements.HTMLAttributes` enumerates per-
+    // event handler types with strict event signatures
+    // (`'on:click'?: MouseEventHandler<…>`). Our fallback uses a
+    // wildcard `[name: \`on:${string}\`]: any` so we don't regress
+    // workspaces that rely on the directive being permissive without
+    // a real svelte install. Trade: `<div on:wat>` won't fire 2353
+    // here (precise event-name parity needs a vendored svelte stub
+    // with full `HTMLElementEventMap` integration; not in scope of
+    // this round).
+    export interface HTMLAttributes<T extends EventTarget = HTMLElement> {
+        // Global HTML attributes
+        accesskey?: any;
+        autocapitalize?: any;
+        autofocus?: any;
+        class?: any;
+        contenteditable?: any;
+        contextmenu?: any;
+        dir?: any;
+        draggable?: any;
+        enterkeyhint?: any;
+        hidden?: any;
+        id?: any;
+        inert?: any;
+        inputmode?: any;
+        is?: any;
+        itemid?: any;
+        itemprop?: any;
+        itemref?: any;
+        itemscope?: any;
+        itemtype?: any;
+        lang?: any;
+        nonce?: any;
+        part?: any;
+        popover?: any;
+        role?: any;
+        slot?: any;
+        spellcheck?: any;
+        style?: any;
+        tabindex?: any;
+        title?: any;
+        translate?: any;
+        // Common form/media element attributes — kept in the base for
+        // permissiveness across input/button/form/img/source/etc. Real
+        // Svelte ships per-element subtypes (`HTMLInputAttributes`,
+        // etc.) that define these on specific elements; the fallback
+        // collapses them into the base shape so `<input type=…>` /
+        // `<button type=…>` / `<a href=…>` etc. type-check without
+        // per-element narrowing.
+        accept?: any;
+        action?: any;
+        allow?: any;
+        alt?: any;
+        async?: any;
+        autocomplete?: any;
+        autoplay?: any;
+        capture?: any;
+        charset?: any;
+        checked?: any;
+        cite?: any;
+        cols?: any;
+        colspan?: any;
+        content?: any;
+        controls?: any;
+        coords?: any;
+        crossorigin?: any;
+        data?: any;
+        datetime?: any;
+        decoding?: any;
+        default?: any;
+        defer?: any;
+        disabled?: any;
+        download?: any;
+        encoding?: any;
+        enctype?: any;
+        for?: any;
+        form?: any;
+        formaction?: any;
+        formenctype?: any;
+        formmethod?: any;
+        formnovalidate?: any;
+        formtarget?: any;
+        headers?: any;
+        height?: any;
+        high?: any;
+        href?: any;
+        hreflang?: any;
+        httpEquiv?: any;
+        icon?: any;
+        kind?: any;
+        label?: any;
+        list?: any;
+        loading?: any;
+        loop?: any;
+        low?: any;
+        manifest?: any;
+        max?: any;
+        maxlength?: any;
+        media?: any;
+        method?: any;
+        min?: any;
+        minlength?: any;
+        multiple?: any;
+        muted?: any;
+        name?: any;
+        novalidate?: any;
+        open?: any;
+        optimum?: any;
+        pattern?: any;
+        ping?: any;
+        placeholder?: any;
+        playsinline?: any;
+        poster?: any;
+        preload?: any;
+        readonly?: any;
+        referrerpolicy?: any;
+        rel?: any;
+        required?: any;
+        reversed?: any;
+        rows?: any;
+        rowspan?: any;
+        sandbox?: any;
+        scope?: any;
+        selected?: any;
+        shape?: any;
+        size?: any;
+        sizes?: any;
+        span?: any;
+        src?: any;
+        srcdoc?: any;
+        srclang?: any;
+        srcset?: any;
+        start?: any;
+        step?: any;
+        summary?: any;
+        target?: any;
+        type?: any;
+        usemap?: any;
+        value?: any;
+        width?: any;
+        wrap?: any;
+        // Standard prefixed attribute index signatures
+        [name: `data-${string}`]: any;
+        [name: `aria-${string}`]: any;
+        // Svelte 4 directive prefixes + Svelte 5 native event handlers.
+        // `on${string}` covers both `onclick` (Svelte 5) and `on:click`
+        // (Svelte 4) since the latter starts with `on`. The other
+        // directive prefixes (bind:, class:, style:, transition:, in:,
+        // out:, animate:, use:) are kept explicit so the overlay's
+        // generated object-literal keys type-check.
+        [name: `on${string}`]: any;
+        [name: `bind:${string}`]: any;
+        [name: `class:${string}`]: any;
+        [name: `style:${string}`]: any;
+        [name: `transition:${string}`]: any;
+        [name: `in:${string}`]: any;
+        [name: `out:${string}`]: any;
+        [name: `animate:${string}`]: any;
+        [name: `use:${string}`]: any;
+    }
+    export interface SVGAttributes<T extends EventTarget = SVGElement> extends HTMLAttributes<T> {}
+    export type DOMAttributes<T extends EventTarget = Element> = HTMLAttributes<T>;
     // ClassValue mirrors clsx-style accepted shapes — string, array, or
     // object map of class-name → boolean. Real Svelte 5.10+ exports this.
     export type ClassValue = any;
@@ -1558,6 +1726,202 @@ declare module 'svelte/elements' {
     export type WheelEventHandler<T extends EventTarget = Element> = EventHandler<WheelEvent, T>;
     export type AnimationEventHandler<T extends EventTarget = Element> = EventHandler<AnimationEvent, T>;
     export type TransitionEventHandler<T extends EventTarget = Element> = EventHandler<TransitionEvent, T>;
+
+    // Element → attribute-shape mapping. The shim's
+    // `svelteHTML.HTMLProps<K, Override>` (in the always-shipped
+    // portion) does `Omit<SvelteHTMLElements[K], …> & Override`. Real
+    // Svelte ships per-element subtypes (`HTMLAnchorAttributes`,
+    // `HTMLButtonAttributes`, etc.); the fallback collapses every
+    // element to a generic `HTMLAttributes<…>` since the LS
+    // diagnostic-fixture suite doesn't exercise per-element narrow
+    // overrides. The `Property` type-parameter passed through to
+    // diagnostic messages keeps the displayed type readable
+    // (`HTMLProps<"div", HTMLAttributes<any>>`).
+    export interface SvelteHTMLElements {
+        a: HTMLAttributes<HTMLElement>;
+        abbr: HTMLAttributes<HTMLElement>;
+        address: HTMLAttributes<HTMLElement>;
+        area: HTMLAttributes<HTMLElement>;
+        article: HTMLAttributes<HTMLElement>;
+        aside: HTMLAttributes<HTMLElement>;
+        audio: HTMLAttributes<HTMLElement>;
+        b: HTMLAttributes<HTMLElement>;
+        base: HTMLAttributes<HTMLElement>;
+        bdi: HTMLAttributes<HTMLElement>;
+        bdo: HTMLAttributes<HTMLElement>;
+        big: HTMLAttributes<HTMLElement>;
+        blockquote: HTMLAttributes<HTMLElement>;
+        body: HTMLAttributes<HTMLElement>;
+        br: HTMLAttributes<HTMLElement>;
+        button: HTMLAttributes<HTMLElement>;
+        canvas: HTMLAttributes<HTMLElement>;
+        caption: HTMLAttributes<HTMLElement>;
+        cite: HTMLAttributes<HTMLElement>;
+        code: HTMLAttributes<HTMLElement>;
+        col: HTMLAttributes<HTMLElement>;
+        colgroup: HTMLAttributes<HTMLElement>;
+        data: HTMLAttributes<HTMLElement>;
+        datalist: HTMLAttributes<HTMLElement>;
+        dd: HTMLAttributes<HTMLElement>;
+        del: HTMLAttributes<HTMLElement>;
+        details: HTMLAttributes<HTMLElement>;
+        dfn: HTMLAttributes<HTMLElement>;
+        dialog: HTMLAttributes<HTMLElement>;
+        div: HTMLAttributes<HTMLElement>;
+        dl: HTMLAttributes<HTMLElement>;
+        dt: HTMLAttributes<HTMLElement>;
+        em: HTMLAttributes<HTMLElement>;
+        embed: HTMLAttributes<HTMLElement>;
+        fieldset: HTMLAttributes<HTMLElement>;
+        figcaption: HTMLAttributes<HTMLElement>;
+        figure: HTMLAttributes<HTMLElement>;
+        footer: HTMLAttributes<HTMLElement>;
+        form: HTMLAttributes<HTMLElement>;
+        h1: HTMLAttributes<HTMLElement>;
+        h2: HTMLAttributes<HTMLElement>;
+        h3: HTMLAttributes<HTMLElement>;
+        h4: HTMLAttributes<HTMLElement>;
+        h5: HTMLAttributes<HTMLElement>;
+        h6: HTMLAttributes<HTMLElement>;
+        head: HTMLAttributes<HTMLElement>;
+        header: HTMLAttributes<HTMLElement>;
+        hgroup: HTMLAttributes<HTMLElement>;
+        hr: HTMLAttributes<HTMLElement>;
+        html: HTMLAttributes<HTMLElement>;
+        i: HTMLAttributes<HTMLElement>;
+        iframe: HTMLAttributes<HTMLElement>;
+        img: HTMLAttributes<HTMLElement>;
+        input: HTMLAttributes<HTMLElement>;
+        ins: HTMLAttributes<HTMLElement>;
+        kbd: HTMLAttributes<HTMLElement>;
+        keygen: HTMLAttributes<HTMLElement>;
+        label: HTMLAttributes<HTMLElement>;
+        legend: HTMLAttributes<HTMLElement>;
+        li: HTMLAttributes<HTMLElement>;
+        link: HTMLAttributes<HTMLElement>;
+        main: HTMLAttributes<HTMLElement>;
+        map: HTMLAttributes<HTMLElement>;
+        mark: HTMLAttributes<HTMLElement>;
+        menu: HTMLAttributes<HTMLElement>;
+        menuitem: HTMLAttributes<HTMLElement>;
+        meta: HTMLAttributes<HTMLElement>;
+        meter: HTMLAttributes<HTMLElement>;
+        nav: HTMLAttributes<HTMLElement>;
+        noscript: HTMLAttributes<HTMLElement>;
+        object: HTMLAttributes<HTMLElement>;
+        ol: HTMLAttributes<HTMLElement>;
+        optgroup: HTMLAttributes<HTMLElement>;
+        option: HTMLAttributes<HTMLElement>;
+        output: HTMLAttributes<HTMLElement>;
+        p: HTMLAttributes<HTMLElement>;
+        param: HTMLAttributes<HTMLElement>;
+        picture: HTMLAttributes<HTMLElement>;
+        pre: HTMLAttributes<HTMLElement>;
+        progress: HTMLAttributes<HTMLElement>;
+        q: HTMLAttributes<HTMLElement>;
+        rp: HTMLAttributes<HTMLElement>;
+        rt: HTMLAttributes<HTMLElement>;
+        ruby: HTMLAttributes<HTMLElement>;
+        s: HTMLAttributes<HTMLElement>;
+        samp: HTMLAttributes<HTMLElement>;
+        slot: HTMLAttributes<HTMLElement>;
+        script: HTMLAttributes<HTMLElement>;
+        search: HTMLAttributes<HTMLElement>;
+        section: HTMLAttributes<HTMLElement>;
+        select: HTMLAttributes<HTMLElement>;
+        small: HTMLAttributes<HTMLElement>;
+        source: HTMLAttributes<HTMLElement>;
+        span: HTMLAttributes<HTMLElement>;
+        strong: HTMLAttributes<HTMLElement>;
+        style: HTMLAttributes<HTMLElement>;
+        sub: HTMLAttributes<HTMLElement>;
+        summary: HTMLAttributes<HTMLElement>;
+        sup: HTMLAttributes<HTMLElement>;
+        table: HTMLAttributes<HTMLElement>;
+        template: HTMLAttributes<HTMLElement>;
+        tbody: HTMLAttributes<HTMLElement>;
+        td: HTMLAttributes<HTMLElement>;
+        textarea: HTMLAttributes<HTMLElement>;
+        tfoot: HTMLAttributes<HTMLElement>;
+        th: HTMLAttributes<HTMLElement>;
+        thead: HTMLAttributes<HTMLElement>;
+        time: HTMLAttributes<HTMLElement>;
+        title: HTMLAttributes<HTMLElement>;
+        tr: HTMLAttributes<HTMLElement>;
+        track: HTMLAttributes<HTMLElement>;
+        u: HTMLAttributes<HTMLElement>;
+        ul: HTMLAttributes<HTMLElement>;
+        var: HTMLAttributes<HTMLElement>;
+        video: HTMLAttributes<HTMLElement>;
+        wbr: HTMLAttributes<HTMLElement>;
+        webview: HTMLAttributes<HTMLElement>;
+        // SVG
+        svg: SVGAttributes<SVGElement>;
+        animate: SVGAttributes<SVGElement>;
+        animateMotion: SVGAttributes<SVGElement>;
+        animateTransform: SVGAttributes<SVGElement>;
+        circle: SVGAttributes<SVGElement>;
+        clipPath: SVGAttributes<SVGElement>;
+        defs: SVGAttributes<SVGElement>;
+        desc: SVGAttributes<SVGElement>;
+        ellipse: SVGAttributes<SVGElement>;
+        feBlend: SVGAttributes<SVGElement>;
+        feColorMatrix: SVGAttributes<SVGElement>;
+        feComponentTransfer: SVGAttributes<SVGElement>;
+        feComposite: SVGAttributes<SVGElement>;
+        feConvolveMatrix: SVGAttributes<SVGElement>;
+        feDiffuseLighting: SVGAttributes<SVGElement>;
+        feDisplacementMap: SVGAttributes<SVGElement>;
+        feDistantLight: SVGAttributes<SVGElement>;
+        feDropShadow: SVGAttributes<SVGElement>;
+        feFlood: SVGAttributes<SVGElement>;
+        feFuncA: SVGAttributes<SVGElement>;
+        feFuncB: SVGAttributes<SVGElement>;
+        feFuncG: SVGAttributes<SVGElement>;
+        feFuncR: SVGAttributes<SVGElement>;
+        feGaussianBlur: SVGAttributes<SVGElement>;
+        feImage: SVGAttributes<SVGElement>;
+        feMerge: SVGAttributes<SVGElement>;
+        feMergeNode: SVGAttributes<SVGElement>;
+        feMorphology: SVGAttributes<SVGElement>;
+        feOffset: SVGAttributes<SVGElement>;
+        fePointLight: SVGAttributes<SVGElement>;
+        feSpecularLighting: SVGAttributes<SVGElement>;
+        feSpotLight: SVGAttributes<SVGElement>;
+        feTile: SVGAttributes<SVGElement>;
+        feTurbulence: SVGAttributes<SVGElement>;
+        filter: SVGAttributes<SVGElement>;
+        foreignObject: SVGAttributes<SVGElement>;
+        g: SVGAttributes<SVGElement>;
+        image: SVGAttributes<SVGElement>;
+        line: SVGAttributes<SVGElement>;
+        linearGradient: SVGAttributes<SVGElement>;
+        marker: SVGAttributes<SVGElement>;
+        mask: SVGAttributes<SVGElement>;
+        metadata: SVGAttributes<SVGElement>;
+        mpath: SVGAttributes<SVGElement>;
+        path: SVGAttributes<SVGElement>;
+        pattern: SVGAttributes<SVGElement>;
+        polygon: SVGAttributes<SVGElement>;
+        polyline: SVGAttributes<SVGElement>;
+        radialGradient: SVGAttributes<SVGElement>;
+        rect: SVGAttributes<SVGElement>;
+        stop: SVGAttributes<SVGElement>;
+        switch: SVGAttributes<SVGElement>;
+        symbol: SVGAttributes<SVGElement>;
+        text: SVGAttributes<SVGElement>;
+        textPath: SVGAttributes<SVGElement>;
+        tspan: SVGAttributes<SVGElement>;
+        use: SVGAttributes<SVGElement>;
+        view: SVGAttributes<SVGElement>;
+        // Svelte-specific element keys (also enumerated in svelteHTML.IntrinsicElements).
+        'svelte:window': HTMLAttributes<HTMLElement>;
+        'svelte:body': HTMLAttributes<HTMLElement>;
+        'svelte:document': HTMLAttributes<HTMLElement>;
+        'svelte:fragment': HTMLAttributes<HTMLElement>;
+        'svelte:options': HTMLAttributes<HTMLElement>;
+        'svelte:head': HTMLAttributes<HTMLElement>;
+    }
 }
 
 declare module 'svelte/compiler' {
