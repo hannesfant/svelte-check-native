@@ -10,12 +10,8 @@ async function $$render_03b58764() {
                 const { /*Ωignore_startΩ*/$$_$$/*Ωignore_endΩ*/, name: n, shadowed1, shadowed2, subthing } = __svn_inst_0.$$slot_def.default; $$_$$;
                 {
                     const { /*Ωignore_startΩ*/$$_$$/*Ωignore_endΩ*/, subthing } = __svn_inst_0.$$slot_def["sub1"]; $$_$$;
-                    { svelteHTML.createElement("p", {});                         {
-                            let subthing: any;
-                            void subthing;
-                            (thing);
-                            (subthing);
-                        }
+                    { svelteHTML.createElement("p", {});                         (thing);
+                        (subthing);
                     }
                 }
                 {

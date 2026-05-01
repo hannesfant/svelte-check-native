@@ -62,7 +62,16 @@ pub(crate) fn emit_children_with_let_bindings(
     action_counter: &mut usize,
 ) {
     let let_names = collect_let_directive_names(source, attributes);
-    if let_names.is_empty() {
+    // When the element ALSO has `slot="X"`, the parent component's
+    // child-walk already opened a wrapper destructuring the same
+    // let-names against `parent_inst.$$slot_def["X"]` (see
+    // `try_emit_slot_let_consumer_open`). Re-emitting `let X: any`
+    // shadows here would mask the typed outer destructure — the
+    // consumer expressions inside would all resolve to `any` and lose
+    // strictness. Pass through to the children walk instead so the
+    // outer destructure stays in scope.
+    let parent_destructured = svn_analyze::literal_attr_value(attributes, "slot").is_some();
+    if let_names.is_empty() || parent_destructured {
         emit_template_body(buf, source, children, depth, insts, action_counter);
         return;
     }

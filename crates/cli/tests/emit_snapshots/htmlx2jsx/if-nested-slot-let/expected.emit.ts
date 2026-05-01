@@ -30,13 +30,7 @@ async function $$render_dc3d7c74() {
                     const __svn_inst_a8 = new __svn_C_a8({ target: __svn_any(), props: {children: () => __svn_snippet_return()} });
                     {
                         const { /*Ωignore_startΩ*/$$_$$/*Ωignore_endΩ*/, foo, foo1 } = __svn_inst_a8.$$slot_def["named"]; $$_$$;
-                        { svelteHTML.createElement("div", {});                             {
-                                let foo: any;
-                                void foo;
-                                let foo1: any;
-                                void foo1;
-                                (foo);
-                            }
+                        { svelteHTML.createElement("div", {});                             (foo);
                         }
                     }
                 }
@@ -46,11 +40,7 @@ async function $$render_dc3d7c74() {
                     const __svn_inst_12c = new __svn_C_12c({ target: __svn_any(), props: {children: () => __svn_snippet_return()} });
                     {
                         const { /*Ωignore_startΩ*/$$_$$/*Ωignore_endΩ*/, foo: bar } = __svn_inst_12c.$$slot_def["named"]; $$_$$;
-                        { svelteHTML.createElement("div", {});                             {
-                                let bar: any;
-                                void bar;
-                                (bar);
-                            }
+                        { svelteHTML.createElement("div", {});                             (bar);
                         }
                     }
                 }
