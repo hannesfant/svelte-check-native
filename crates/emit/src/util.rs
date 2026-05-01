@@ -189,9 +189,217 @@ pub(crate) fn generic_arg_names(generics: &str) -> String {
 /// The value is spliced verbatim into our wrapping function as
 /// `function $$render<T extends Item, K extends keyof T>() { ... }` so
 /// any references to `T` / `K` inside the script body resolve correctly.
+/// Blank out `type NAME = $$Generic[<args>];` declarations from a
+/// script body, replacing each matched span with whitespace of equal
+/// length so subsequent line/column source maps stay aligned.
+///
+/// Used in the rewrite chain when `synthesise_generics_from_dollar_generic`
+/// has lifted these declarations into the render-fn's generic-param
+/// list — the body must NOT also re-declare them (TS2300 duplicate
+/// identifier in the function scope, on top of the local declaration
+/// shadowing the generic parameter and degrading binding precision).
+pub(crate) fn blank_dollar_generic_decls(script: &str) -> String {
+    let bytes = script.as_bytes();
+    let mut out = script.to_string();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let Some(rel) = bytes[cursor..].windows(4).position(|w| w == b"type") else {
+            break;
+        };
+        let kw_start = cursor + rel;
+        cursor = kw_start + 4;
+        // Reject identifier prefix/suffix continuation.
+        let before_ok = kw_start == 0 || !is_ident_byte(bytes[kw_start - 1]);
+        let after_ok = cursor < bytes.len() && is_ascii_ws(bytes[cursor]);
+        if !before_ok || !after_ok {
+            continue;
+        }
+        // Skip whitespace, read NAME.
+        while cursor < bytes.len() && is_ascii_ws(bytes[cursor]) {
+            cursor += 1;
+        }
+        let name_start = cursor;
+        while cursor < bytes.len() && is_ident_byte(bytes[cursor]) {
+            cursor += 1;
+        }
+        if name_start == cursor {
+            continue;
+        }
+        while cursor < bytes.len() && is_ascii_ws(bytes[cursor]) {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&b'=') {
+            continue;
+        }
+        cursor += 1;
+        while cursor < bytes.len() && is_ascii_ws(bytes[cursor]) {
+            cursor += 1;
+        }
+        if !script[cursor..].starts_with("$$Generic") {
+            continue;
+        }
+        cursor += "$$Generic".len();
+        // Optional `<args>`.
+        if bytes.get(cursor) == Some(&b'<') {
+            cursor += 1;
+            let mut depth = 1usize;
+            while cursor < bytes.len() && depth > 0 {
+                match bytes[cursor] {
+                    b'<' => depth += 1,
+                    b'>' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                cursor += 1;
+            }
+            if depth != 0 {
+                return out;
+            }
+            cursor += 1; // past `>`
+        }
+        // Skip whitespace, expect `;` (or end of line / file).
+        while cursor < bytes.len() && matches!(bytes[cursor], b' ' | b'\t') {
+            cursor += 1;
+        }
+        let semi_end = if bytes.get(cursor) == Some(&b';') {
+            cursor + 1
+        } else {
+            cursor
+        };
+        // Replace the span [kw_start..semi_end) with spaces, preserving
+        // newlines so line numbers stay aligned.
+        let span = &script[kw_start..semi_end];
+        let replacement: String = span
+            .chars()
+            .map(|c| if c == '\n' || c == '\r' { c } else { ' ' })
+            .collect();
+        out.replace_range(kw_start..semi_end, &replacement);
+        cursor = semi_end;
+    }
+    out
+}
+
 pub(crate) fn extract_generics_attr(doc: &Document<'_>) -> Option<SmolStr> {
     let script = doc.instance_script.as_ref()?;
-    script.generics.as_deref().map(SmolStr::from)
+    if let Some(g) = script.generics.as_deref() {
+        return Some(SmolStr::from(g));
+    }
+    // SVELTE-4-COMPAT: when no `<script generics="...">` attribute is
+    // present, fall back to scanning for `type NAME = $$Generic[<args>];`
+    // declarations and synthesise a generic-parameter list. Mirrors
+    // upstream svelte2tsx's `Generics.ts` which threads `$$Generic`
+    // type names through to the render fn's `<...>` so consumer-side
+    // `<Comp prop={value}>` calls bind the generic from the prop's
+    // type. Without this, `type A = $$Generic` resolves at module
+    // scope as `$$Generic<any> = any`, defeating per-call binding.
+    synthesise_generics_from_dollar_generic(script.content)
+}
+
+/// Scan an instance-script body for `type NAME = $$Generic[<args>];`
+/// declarations and return them as a generic-parameter list. Each
+/// declaration becomes one parameter:
+///   `type A = $$Generic;`            → `A`
+///   `type B = $$Generic<keyof A>;`   → `B extends keyof A`
+///   `type C = $$Generic<boolean>;`   → `C extends boolean`
+///
+/// Walk order is source order, so parameters reference each other as
+/// in the user's source (`B extends keyof A` requires A first).
+/// Returns `None` when no `$$Generic` declarations exist (caller's
+/// non-`<script generics>` path keeps its existing behaviour).
+fn synthesise_generics_from_dollar_generic(script: &str) -> Option<SmolStr> {
+    let bytes = script.as_bytes();
+    let mut params: Vec<String> = Vec::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        // Find next `type` keyword.
+        let Some(rel) = bytes[cursor..]
+            .windows(4)
+            .position(|w| w == b"type")
+        else {
+            break;
+        };
+        let kw_start = cursor + rel;
+        cursor = kw_start + 4;
+        // Reject identifier prefix/suffix continuation
+        // (`Type` / `prototype`).
+        let before_ok = kw_start == 0 || !is_ident_byte(bytes[kw_start - 1]);
+        let after_ok = cursor < bytes.len() && is_ascii_ws(bytes[cursor]);
+        if !before_ok || !after_ok {
+            continue;
+        }
+        // Skip whitespace, read NAME.
+        while cursor < bytes.len() && is_ascii_ws(bytes[cursor]) {
+            cursor += 1;
+        }
+        let name_start = cursor;
+        while cursor < bytes.len() && is_ident_byte(bytes[cursor]) {
+            cursor += 1;
+        }
+        if name_start == cursor {
+            continue;
+        }
+        let name = &script[name_start..cursor];
+        // Skip whitespace, expect `=`.
+        while cursor < bytes.len() && is_ascii_ws(bytes[cursor]) {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&b'=') {
+            continue;
+        }
+        cursor += 1;
+        while cursor < bytes.len() && is_ascii_ws(bytes[cursor]) {
+            cursor += 1;
+        }
+        // Expect literal `$$Generic` (followed by optional `<args>`).
+        if !script[cursor..].starts_with("$$Generic") {
+            continue;
+        }
+        cursor += "$$Generic".len();
+        // Optional `<args>` — track angle-bracket nesting.
+        let constraint = if bytes.get(cursor) == Some(&b'<') {
+            cursor += 1;
+            let arg_start = cursor;
+            let mut depth = 1usize;
+            while cursor < bytes.len() && depth > 0 {
+                match bytes[cursor] {
+                    b'<' => depth += 1,
+                    b'>' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                cursor += 1;
+            }
+            if depth != 0 {
+                return None;
+            }
+            let constraint = script[arg_start..cursor].trim().to_string();
+            cursor += 1; // past `>`
+            if constraint.is_empty() {
+                None
+            } else {
+                Some(constraint)
+            }
+        } else {
+            None
+        };
+        match constraint {
+            Some(c) => params.push(format!("{name} extends {c}")),
+            None => params.push(name.to_string()),
+        }
+    }
+    if params.is_empty() {
+        None
+    } else {
+        Some(SmolStr::from(params.join(", ")))
+    }
 }
 
 #[inline]

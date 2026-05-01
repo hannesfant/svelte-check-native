@@ -87,7 +87,7 @@ use svelte4::compat::{emit_svelte4_ambients, has_strict_events_attr, is_runes_mo
 use svn_analyze::should_synthesise_js_props;
 
 pub use util::compute_line_starts;
-use util::{extract_generics_attr, render_function_name};
+use util::{blank_dollar_generic_decls, extract_generics_attr, render_function_name};
 
 use std::fmt::Write;
 use std::path::Path;
@@ -833,10 +833,28 @@ fn emit_document_with_render_name(
                 | svn_analyze::PropsSource::RuneAnnotation
                 | svn_analyze::PropsSource::RuneGeneric
         );
+    // SVELTE-4-COMPAT: when `type NAME = $$Generic[<args>];` declarations
+    // synthesised the render-fn's generic param list (see
+    // `synthesise_generics_from_dollar_generic`), blank those
+    // declarations from the body. Otherwise the body's local
+    // `type NAME = $$Generic = any` shadows the generic parameter and
+    // tsgo fires TS2300 ("Duplicate identifier") on each one. Mirrors
+    // upstream svelte2tsx's `Generics.ts` strip pass at
+    // `language-tools/packages/svelte2tsx/src/svelte2tsx/nodes/Generics.ts`.
+    let strip_dollar_generic = doc
+        .instance_script
+        .as_ref()
+        .is_some_and(|s| s.generics.is_none())
+        && generics.is_some();
     let rewritten_content: Option<String> = doc.instance_script.as_ref().map(|s| {
         let (after_reactive, touched) =
             svelte4::reactive::rewrite_with_touched_names(s.content, s.lang);
         reactive_touched_names = touched;
+        let after_reactive = if strip_dollar_generic {
+            blank_dollar_generic_decls(&after_reactive)
+        } else {
+            after_reactive
+        };
         // Rewrite `let X: Type = $state(null | undefined)` to
         // `$state<Type>(null | undefined)` so the single-T `$state`
         // shim overload picks `T` from the explicit generic (sourced

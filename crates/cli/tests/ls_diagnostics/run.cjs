@@ -121,7 +121,7 @@ const SKIP_LIST = {
     // shape now fires 2353 on `<label horizontalAlignment=…>` etc. which the
     // svelte-native fixture intends to permit.
     'svelte-native': 'namespace-handling: requires svelteOptions.namespace=svelteNative.JSX',
-    'generics': 'overlay-counts: 2322/2367 multiset diverges',
+    // (was 'generics' — closed by R-Conv #20 B2 #6, $$Generic class-wrapper synth)
     'getters': 'overlay-counts: 2367 vs 2749 mismatch',
     // (was 'snippet-js.v5' — closed by R-Conv #20 B2 #4: typed JS snippet hoist + if-condition TokenMap)
     'strictEvents': 'overlay-counts: 2345 missing',
