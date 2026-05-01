@@ -7,14 +7,14 @@ async function $$render_ddf2ba9e() {
             void [hello, hello1];
             {
                 const __svn_C_1a = __svn_ensure_component(Comp);
-                const __svn_inst_1a = new __svn_C_1a({ target: __svn_any(), props: {children: () => __svn_snippet_return()} });
+                const __svn_inst_1a = new __svn_C_1a({ target: __svn_any(), props: {} });
                 {
                     const { /*Ωignore_startΩ*/$$_$$/*Ωignore_endΩ*/, hello } = __svn_inst_1a.$$slot_def.default; $$_$$;
                     void hello;
                     (hello);
                     {
                         const __svn_C_43 = __svn_ensure_component(Comp);
-                        const __svn_inst_43 = new __svn_C_43({ target: __svn_any(), props: {children: () => __svn_snippet_return()} });
+                        const __svn_inst_43 = new __svn_C_43({ target: __svn_any(), props: {} });
                         {
                             const { /*Ωignore_startΩ*/$$_$$/*Ωignore_endΩ*/, hello } = __svn_inst_43.$$slot_def.default; $$_$$;
                             void hello;
@@ -26,7 +26,7 @@ async function $$render_ddf2ba9e() {
                     }
                     {
                         const __svn_C_ae = __svn_ensure_component(Comp);
-                        const __svn_inst_ae = new __svn_C_ae({ target: __svn_any(), props: {hello, children: () => __svn_snippet_return()} });
+                        const __svn_inst_ae = new __svn_C_ae({ target: __svn_any(), props: {hello} });
                         {
                             const { /*Ωignore_startΩ*/$$_$$/*Ωignore_endΩ*/, hello } = __svn_inst_ae.$$slot_def.default; $$_$$;
                             void hello;
@@ -59,7 +59,7 @@ async function $$render_ddf2ba9e() {
                         void hello;
                         {
                             const __svn_C_223 = __svn_ensure_component(Comp);
-                            new __svn_C_223({ target: __svn_any(), props: {children: () => __svn_snippet_return()} });
+                            new __svn_C_223({ target: __svn_any(), props: {} });
                             if ((hello)) {
                                 void [hello];
                                 (hello);
@@ -70,7 +70,7 @@ async function $$render_ddf2ba9e() {
                         void [hello];
                         {
                             const __svn_C_2b4 = __svn_ensure_component(Comp);
-                            const __svn_inst_2b4 = new __svn_C_2b4({ target: __svn_any(), props: {children: () => __svn_snippet_return()} });
+                            const __svn_inst_2b4 = new __svn_C_2b4({ target: __svn_any(), props: {} });
                             {
                                 const { /*Ωignore_startΩ*/$$_$$/*Ωignore_endΩ*/, hello } = __svn_inst_2b4.$$slot_def.default; $$_$$;
                                 void hello;
@@ -82,7 +82,7 @@ async function $$render_ddf2ba9e() {
                         }
                         {
                             const __svn_C_333 = __svn_ensure_component(Comp);
-                            const __svn_inst_333 = new __svn_C_333({ target: __svn_any(), props: {children: () => __svn_snippet_return()} });
+                            const __svn_inst_333 = new __svn_C_333({ target: __svn_any(), props: {} });
                             {
                                 const { /*Ωignore_startΩ*/$$_$$/*Ωignore_endΩ*/, foo } = __svn_inst_333.$$slot_def.default; $$_$$;
                                 void foo;
@@ -101,7 +101,7 @@ async function $$render_ddf2ba9e() {
                 void [hi, bye];
                 {
                     const __svn_C_3ff = __svn_ensure_component(Comp);
-                    const __svn_inst_3ff = new __svn_C_3ff({ target: __svn_any(), props: {children: () => __svn_snippet_return()} });
+                    const __svn_inst_3ff = new __svn_C_3ff({ target: __svn_any(), props: {} });
                     {
                         const { /*Ωignore_startΩ*/$$_$$/*Ωignore_endΩ*/, foo: bye } = __svn_inst_3ff.$$slot_def.default; $$_$$;
                         void bye;
@@ -137,7 +137,7 @@ async function $$render_ddf2ba9e() {
         }
         {
             const __svn_C_56f = __svn_ensure_component(Comp);
-            const __svn_inst_56f = new __svn_C_56f({ target: __svn_any(), props: {children: () => __svn_snippet_return()} });
+            const __svn_inst_56f = new __svn_C_56f({ target: __svn_any(), props: {} });
             {
                 const { /*Ωignore_startΩ*/$$_$$/*Ωignore_endΩ*/, hello } = __svn_inst_56f.$$slot_def.default; $$_$$;
                 void hello;

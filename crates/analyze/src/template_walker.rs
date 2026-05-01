@@ -2090,11 +2090,24 @@ fn collect_instantiation_inner(
     // child node between the open/close tags. Pure `{#snippet}`
     // children hoist as explicit props (different code path); pure
     // whitespace (formatting indent) is ignored.
-    let has_implicit_children = children.nodes.iter().any(|n| match n {
-        Node::SnippetBlock(_) => false,
-        Node::Text(t) => !t.content.trim().is_empty(),
-        _ => true,
+    //
+    // Skip when the component carries any `let:NAME` directive: the
+    // body content is then a slot-let scope, NOT a `children` prop
+    // surface. Emitting `children: () => __svn_snippet_return()`
+    // against a component declaring `Record<string, never>` props
+    // (no children, no slots either) fires TS2322 spuriously, where
+    // upstream silently routes the body through the slot scope.
+    // Example: `<Comp let:b>...</Comp>` against a Comp with no
+    // declared `children: Snippet`.
+    let has_let_directive = attributes.iter().any(|a| {
+        matches!(a, Attribute::Directive(d) if d.kind == svn_parser::DirectiveKind::Let)
     });
+    let has_implicit_children = !has_let_directive
+        && children.nodes.iter().any(|n| match n {
+            Node::SnippetBlock(_) => false,
+            Node::Text(t) => !t.content.trim().is_empty(),
+            _ => true,
+        });
     for attr in attributes {
         match attr {
             Attribute::Plain(p) => {
