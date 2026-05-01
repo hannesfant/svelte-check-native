@@ -221,6 +221,16 @@ pub(crate) fn emit_render_body_return(
         // `__sveltets_2_with_any_event` fallback.
         "{ [evt: string]: CustomEvent<any> }".to_string()
     };
+    // The `bindings:` field type carries the literal-string union of
+    // bindable prop names per upstream svelte2tsx's
+    // `createBindingsStr` (ExportedNames.ts:764-771):
+    //   - Runes mode: `__svn_$$bindings('a', 'b')` — typed as
+    //     `'a' | 'b'`. Drives TS2322 on
+    //     `inst.$$bindings = '<not-bindable>'` post-instance checks.
+    //   - Svelte-4 mode: `string` — every `export let` /
+    //     `export function` is bindable, so the iso ctor's
+    //     `$$bindings?: string` accepts any name.
+    let bindings_field: String = build_bindings_field(props_info);
     // The `slots:` field literal is written straight into the emit
     // buffer at its splice site — see [`write_slots_field_type`] for
     // shape. Single-line output, so bypassing EmitBuffer's line
@@ -249,7 +259,7 @@ pub(crate) fn emit_render_body_return(
         write_slots_field(buf.raw_string_mut());
         let _ = writeln!(
             buf,
-            ", bindings: undefined as any as string, exports: undefined as any as ({exports_field}) }};",
+            ", bindings: {bindings_field}, exports: undefined as any as ({exports_field}) }};",
         );
         return;
     }
@@ -294,7 +304,7 @@ pub(crate) fn emit_render_body_return(
         write_slots_field(buf.raw_string_mut());
         let _ = writeln!(
             buf,
-            ", bindings: undefined as any as string, exports: undefined as any as ({exports_field}) }};",
+            ", bindings: {bindings_field}, exports: undefined as any as ({exports_field}) }};",
         );
         return;
     }
@@ -308,8 +318,65 @@ pub(crate) fn emit_render_body_return(
     write_slots_field(buf.raw_string_mut());
     let _ = writeln!(
         buf,
-        ", bindings: undefined as any as string, exports: undefined as any as ({exports_field}) }};",
+        ", bindings: {bindings_field}, exports: undefined as any as ({exports_field}) }};",
     );
+}
+
+/// Build the `bindings:` field expression for the render-fn return.
+/// Mirrors upstream svelte2tsx's `createBindingsStr`
+/// (`ExportedNames.ts:764-771`):
+///
+/// - Runes mode (`PropsSource::RuneAnnotation` /
+///   `PropsSource::RuneGeneric`): collect every destructure entry with
+///   `is_bindable: true` (the `$bindable()` marker on the default) and
+///   emit `__svn_$$bindings('a', 'b')`. The shim returns
+///   `Bindings[number]`, i.e. the literal-string union `'a' | 'b'`.
+///   Drives TS2322 on `inst.$$bindings = '<not-bindable>'` post-
+///   instance checks.
+/// - Svelte-4 mode (any other source): emit `undefined as any as
+///   string`. Every `export let` / `export function` is bindable, so
+///   the iso ctor's `$$bindings?: string` accepts any name and the
+///   post-instance check stays silent.
+fn build_bindings_field(props_info: &svn_analyze::PropsInfo) -> String {
+    let is_runes = matches!(
+        props_info.source,
+        svn_analyze::PropsSource::RuneAnnotation
+            | svn_analyze::PropsSource::RuneGeneric
+            | svn_analyze::PropsSource::SynthesisedFromDestructure
+    );
+    if !is_runes {
+        return "undefined as any as string".to_string();
+    }
+    let bindable: Vec<&svn_analyze::PropInfo> = props_info
+        .destructures
+        .iter()
+        .filter(|p| p.is_bindable)
+        .collect();
+    if bindable.is_empty() {
+        // Runes-mode component with no `$bindable()` props — emit
+        // `__svn_$$bindings()` returning `never`. Any `bind:NAME`
+        // post-instance check fires TS2322 against `never`. Mirrors
+        // upstream's `__sveltets_$$bindings('')` empty-string call
+        // (which returns `''`, the empty literal type), but our
+        // helper signature uses `Bindings[number]` so a no-arg call
+        // returns `never` — strictly equivalent in firing TS2322 on
+        // any `inst.$$bindings = '<NAME>'` assignment.
+        return "__svn_$$bindings()".to_string();
+    }
+    let mut out = String::from("__svn_$$bindings(");
+    let mut first = true;
+    for p in bindable {
+        if !first {
+            out.push_str(", ");
+        }
+        first = false;
+        out.push('\'');
+        // PropInfo.prop_key is the public name (matches `bind:NAME`).
+        out.push_str(p.prop_key.as_str());
+        out.push('\'');
+    }
+    out.push(')');
+    out
 }
 
 /// Build the `{ X: T, Y?: U, ... }` type literal for every `export let`

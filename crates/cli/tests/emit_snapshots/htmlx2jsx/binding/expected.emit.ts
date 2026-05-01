@@ -18,8 +18,9 @@ async function $$render_d9f25341() {
         }
         {
             const __svn_C_7a = __svn_ensure_component(Input);
-            new __svn_C_7a({ target: __svn_any(), props: {"type": "text", "value": (test)} });
+            const __svn_inst_7a = new __svn_C_7a({ target: __svn_any(), props: {"type": "text", "value": (test)} });
             /*svn:ignore_start*/void (() => { test = __svn_any(null); });/*svn:ignore_end*/
+            __svn_inst_7a.$$bindings = 'value';
         }
         {
             const __svn_C_a1 = __svn_ensure_component(Input);
@@ -31,8 +32,9 @@ async function $$render_d9f25341() {
         }
         {
             const __svn_C_f3 = __svn_ensure_component(Input);
-            new __svn_C_f3({ target: __svn_any(), props: {"type": "text", "value": (test)} });
+            const __svn_inst_f3 = new __svn_C_f3({ target: __svn_any(), props: {"type": "text", "value": (test)} });
             /*svn:ignore_start*/void (() => { test = __svn_any(null); });/*svn:ignore_end*/
+            __svn_inst_f3.$$bindings = 'value';
         }
     });
     return { props: /** @type {any} */({}) };

@@ -39,7 +39,7 @@ $$render_1c01d715;
 const __svn_component_default: import('svelte').Component<
     Awaited<ReturnType<typeof $$render_1c01d715>>['props'],
     Awaited<ReturnType<typeof $$render_1c01d715>>['exports'],
-    ''
+    Awaited<ReturnType<typeof $$render_1c01d715>>['bindings']
 > = null as any;
 type __svn_component_default = ReturnType<typeof __svn_component_default>;
 export default __svn_component_default;

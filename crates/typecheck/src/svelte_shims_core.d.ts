@@ -544,6 +544,27 @@ declare function __svn_get_set_binding<T>(
 ): T;
 
 /**
+ * Carries the literal-string union of bindable prop names through
+ * the render-fn's `bindings:` field for runes-mode components.
+ * Mirrors upstream `__sveltets_$$bindings` (svelte2tsx/svelte-shims-
+ * v4.d.ts:271) with the `__svn_*` prefix mandated by CLAUDE.md rule
+ * #6.
+ *
+ * Each `bind:NAME={target}` site on a component instantiation emits
+ * `__svn_inst_N.$$bindings = 'NAME';` post-`new`. The instance's
+ * `$$bindings?: B` field is `?: 'a' | 'b'` for runes-mode components
+ * with `let { a = $bindable(), b = $bindable() } = $props()`, so
+ * assigning a non-bindable name fires TS2322 with the upstream
+ * "Cannot use 'bind:' with this property" message after LS post-
+ * filter. Svelte-4 components route through `bindings: string` (lax
+ * — every `export let` / `export function` is bindable) so this
+ * helper never fires there.
+ */
+declare function __svn_$$bindings<Bindings extends string[]>(
+    ...bindings: Bindings
+): Bindings[number];
+
+/**
  * Normalize any component shape to a constructible so one emission
  * works uniformly across the shapes a real Svelte codebase mixes:
  *
@@ -1358,6 +1379,13 @@ declare module 'svelte' {
         $$prop_def: Props;
         $$events_def: Events;
         $$slot_def: Slots;
+        // R-Conv #19 (D-ii fix #4): real svelte's SvelteComponent
+        // declares `$$bindings?: string` (svelte/types/index.d.ts:82)
+        // so the post-instance bindings check (`inst.$$bindings =
+        // 'NAME'`) compiles against Svelte-4 class components without
+        // firing TS2339. The lax `string` type matches Svelte-4
+        // semantics: every `export let` is bindable.
+        $$bindings?: string;
     }
 
     export class SvelteComponentTyped<
@@ -1376,6 +1404,7 @@ declare module 'svelte' {
         $$prop_def: Props;
         $$events_def: Events;
         $$slot_def: Slots;
+        $$bindings?: string;
     }
 
     // Svelte 5 `Component` type — interface form. Mirrors real

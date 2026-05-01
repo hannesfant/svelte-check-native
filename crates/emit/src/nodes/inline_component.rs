@@ -252,7 +252,8 @@ pub(crate) fn emit_component_call(
     let hoist_instance = !inst.on_events.is_empty()
         || inst.bind_this_target.is_some()
         || needs_inst_for_let
-        || has_named_snippet;
+        || has_named_snippet
+        || !inst.bind_directives.is_empty();
     let ctor_lhs = if hoist_instance {
         format!("const {inst_local} = ")
     } else {
@@ -293,6 +294,7 @@ pub(crate) fn emit_component_call(
         emit_component_bind_widen_trailers(buf, inst, &inner);
         emit_bind_this_assignment(buf, source, inst, &inst_local, &inner);
         emit_on_event_calls(buf, source, inst, &inst_local, &inner);
+        emit_component_bindings_post_check(buf, inst, &inst_local, &inner);
         return;
     }
 
@@ -320,6 +322,7 @@ pub(crate) fn emit_component_call(
         emit_component_bind_widen_trailers(buf, inst, &inner);
         emit_bind_this_assignment(buf, source, inst, &inst_local, &inner);
         emit_on_event_calls(buf, source, inst, &inst_local, &inner);
+        emit_component_bindings_post_check(buf, inst, &inst_local, &inner);
         return;
     }
 
@@ -352,6 +355,7 @@ pub(crate) fn emit_component_call(
     emit_component_bind_widen_trailers(buf, inst, &inner);
     emit_bind_this_assignment(buf, source, inst, &inst_local, &inner);
     emit_on_event_calls(buf, source, inst, &inst_local, &inner);
+    emit_component_bindings_post_check(buf, inst, &inst_local, &inner);
     emit_snippet_prop_destructure(buf, snippet_children, &inst_local, &inner);
     let _ = indent;
 }
@@ -441,6 +445,44 @@ fn emit_component_bind_widen_trailers(
             buf,
             "{inner}/*svn:ignore_start*/void (() => {{ {target} = __svn_any(null); }});/*svn:ignore_end*/"
         );
+    }
+}
+
+/// Emit the D-ii post-instance bindings check: one
+/// `__svn_inst_N.$$bindings = 'NAME';` per `bind:NAME` directive on
+/// the component. The instance's `$$bindings?: B` field carries the
+/// literal-string union `B` of `$bindable()` props (runes mode) or
+/// `string` (Svelte-4 mode), so assigning a non-bindable NAME fires
+/// TS2322 — upstream LS's `moveBindingErrorMessage` post-filter then
+/// rewrites the message into the user-visible "Cannot use 'bind:'
+/// with this property" form. Mirrors upstream svelte2tsx
+/// `htmlxtojsx_v2/nodes/Binding.ts:192-195`'s
+/// `appendToStartEnd([\`${element.name}.$$bindings = '${attr.name}';\`])`.
+///
+/// Each emitted `'NAME'` literal carries a TokenMapEntry covering
+/// the source `bind:NAME` directive span — when TS2322 fires on the
+/// literal in the overlay, the diagnostic reverse-maps to the
+/// directive's source position (matching upstream LS's diagnostic
+/// range for the bindings fixture's expected entries at lines
+/// 26:7, 27:7, 30:14, 31:14).
+fn emit_component_bindings_post_check(
+    buf: &mut EmitBuffer,
+    inst: &svn_analyze::ComponentInstantiation,
+    inst_local: &str,
+    inner: &str,
+) {
+    for d in &inst.bind_directives {
+        buf.push_str(inner);
+        // tsgo anchors TS2322 at the LHS reference (`inst.$$bindings`),
+        // not the RHS literal. Map the entire `inst_local.$$bindings`
+        // span to the `bind:NAME` source range so the reverse-map
+        // surfaces the diagnostic at the directive's source position.
+        let lhs = format!("{inst_local}.$$bindings");
+        buf.append_with_source(&lhs, d.range);
+        buf.push_str(" = ");
+        let literal = format!("'{}'", d.name.as_str());
+        buf.append_with_source(&literal, d.range);
+        buf.push_str(";\n");
     }
 }
 

@@ -25,11 +25,13 @@ async function $$render_9eb76bb9() {
         }
         {
             const __svn_C_9f = __svn_ensure_component(Input);
-            new __svn_C_9f({ target: __svn_any(), props: {"value": __svn_get_set_binding(get,  set)} });
+            const __svn_inst_9f = new __svn_C_9f({ target: __svn_any(), props: {"value": __svn_get_set_binding(get,  set)} });
+            __svn_inst_9f.$$bindings = 'value';
         }
         {
             const __svn_C_bf = __svn_ensure_component(Input);
-            new __svn_C_bf({ target: __svn_any(), props: {"value": __svn_get_set_binding(() => v,  new_v => v = new_v)} });
+            const __svn_inst_bf = new __svn_C_bf({ target: __svn_any(), props: {"value": __svn_get_set_binding(() => v,  new_v => v = new_v)} });
+            __svn_inst_bf.$$bindings = 'value';
         }
     });
     return { props: /** @type {any} */({}) };

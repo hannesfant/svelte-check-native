@@ -18,13 +18,13 @@ async function $$render_320c81b9() {
         // template type-check body (incremental)
     });
     void foo;
-    return { props: undefined as any as (Props), events: undefined as any as $$Events, slots: undefined as any as {}, bindings: undefined as any as string, exports: undefined as any as ({}) };
+    return { props: undefined as any as (Props), events: undefined as any as $$Events, slots: undefined as any as {}, bindings: __svn_$$bindings(), exports: undefined as any as ({}) };
 }
 $$render_320c81b9;
 const __svn_component_default: import('svelte').Component<
     Awaited<ReturnType<typeof $$render_320c81b9>>['props'],
     Awaited<ReturnType<typeof $$render_320c81b9>>['exports'],
-    ''
+    Awaited<ReturnType<typeof $$render_320c81b9>>['bindings']
 > = null as any;
 type __svn_component_default = ReturnType<typeof __svn_component_default>;
 export default __svn_component_default;

@@ -15,13 +15,15 @@ async function $$render_6ce80dfb() {
         }
         {
             const __svn_C_49 = __svn_ensure_component(Input);
-            new __svn_C_49({ target: __svn_any(), props: {"type": "text", value} });
+            const __svn_inst_49 = new __svn_C_49({ target: __svn_any(), props: {"type": "text", value} });
             /*svn:ignore_start*/void (() => { value = __svn_any(null); });/*svn:ignore_end*/
+            __svn_inst_49.$$bindings = 'value';
         }
         {
             const __svn_C_6a = __svn_ensure_component(Input);
-            new __svn_C_6a({ target: __svn_any(), props: {"type": "checkbox", checked} });
+            const __svn_inst_6a = new __svn_C_6a({ target: __svn_any(), props: {"type": "checkbox", checked} });
             /*svn:ignore_start*/void (() => { checked = __svn_any(null); });/*svn:ignore_end*/
+            __svn_inst_6a.$$bindings = 'checked';
         }
     });
     return { props: /** @type {any} */({}) };

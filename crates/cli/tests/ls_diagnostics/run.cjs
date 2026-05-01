@@ -112,7 +112,6 @@ const SKIP_LIST = {
     '$store-wrong-usage': 'overlay-counts: 2769 fires 6× upstream, 0× ours',
     'accessors-customElement-configs': 'overlay-counts: 2322 extra in our overlay',
     'actions-animations-transitions-typechecks': 'tsgo-divergence: 1/2 fires (transition:draw), action call fires 2740 (tsgo) where expected 2345 (tsc)',
-    'bindings': 'overlay-counts: 2322/2339/2353 multiset diverges',
     'component-invalid': 'overlay-counts: 2322/2345 missing, 2353/2554 extra',
     // svelte-native expects the svelteNative.JSX namespace switch (jsxFactory:
     // "svelteNative" + svelteOptions.namespace = "svelteNative.JSX") so element

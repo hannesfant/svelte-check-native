@@ -12,13 +12,13 @@ async function $$render_e2598f27() {
         (children(true, () => {}));
     });
     void children;
-    return { props: undefined as any as ($$ComponentProps), events: undefined as any as $$Events, slots: undefined as any as {}, bindings: undefined as any as string, exports: undefined as any as ({}) };
+    return { props: undefined as any as ($$ComponentProps), events: undefined as any as $$Events, slots: undefined as any as {}, bindings: __svn_$$bindings(), exports: undefined as any as ({}) };
 }
 $$render_e2598f27;
 const __svn_component_default: import('svelte').Component<
     Awaited<ReturnType<typeof $$render_e2598f27>>['props'],
     Awaited<ReturnType<typeof $$render_e2598f27>>['exports'],
-    ''
+    Awaited<ReturnType<typeof $$render_e2598f27>>['bindings']
 > = null as any;
 type __svn_component_default = ReturnType<typeof __svn_component_default>;
 export default __svn_component_default;
@@ -40,13 +40,13 @@ async function $$render_ea3119be() {
     });
     void open;
     void onToggle;
-    return { props: undefined as any as ($$ComponentProps), events: undefined as any as $$Events, slots: undefined as any as {}, bindings: undefined as any as string, exports: undefined as any as ({}) };
+    return { props: undefined as any as ($$ComponentProps), events: undefined as any as $$Events, slots: undefined as any as {}, bindings: __svn_$$bindings(), exports: undefined as any as ({}) };
 }
 $$render_ea3119be;
 const __svn_component_default: import('svelte').Component<
     Awaited<ReturnType<typeof $$render_ea3119be>>['props'],
     Awaited<ReturnType<typeof $$render_ea3119be>>['exports'],
-    ''
+    Awaited<ReturnType<typeof $$render_ea3119be>>['bindings']
 > = null as any;
 type __svn_component_default = ReturnType<typeof __svn_component_default>;
 export default __svn_component_default;

@@ -8,7 +8,8 @@ async function $$render_b80130f4() {
         }
         {
             const __svn_C_34 = __svn_ensure_component(Input);
-            new __svn_C_34({ target: __svn_any(), props: {"value": (obj.)} });
+            const __svn_inst_34 = new __svn_C_34({ target: __svn_any(), props: {"value": (obj.)} });
+            __svn_inst_34.$$bindings = 'value';
         }
     });
     return { props: /** @type {any} */({}) };

@@ -24,13 +24,13 @@ let {}: Abc = $props();
     ;(async () => {
         // template type-check body (incremental)
     });
-    return { props: undefined as any as (Abc), events: undefined as any as $$Events, slots: undefined as any as {}, bindings: undefined as any as string, exports: undefined as any as ({}) };
+    return { props: undefined as any as (Abc), events: undefined as any as $$Events, slots: undefined as any as {}, bindings: __svn_$$bindings(), exports: undefined as any as ({}) };
 }
 $$render_384d5614;
 const __svn_component_default: import('svelte').Component<
     Awaited<ReturnType<typeof $$render_384d5614>>['props'],
     Awaited<ReturnType<typeof $$render_384d5614>>['exports'],
-    ''
+    Awaited<ReturnType<typeof $$render_384d5614>>['bindings']
 > = null as any;
 type __svn_component_default = ReturnType<typeof __svn_component_default>;
 export default __svn_component_default;

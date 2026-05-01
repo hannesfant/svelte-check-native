@@ -491,7 +491,17 @@ fn emit_fn_component_default_export(buf: &mut EmitBuffer, render_name: &SmolStr)
         buf,
         "    Awaited<ReturnType<typeof {render_name}>>['exports'],"
     );
-    let _ = writeln!(buf, "    ''");
+    // R-Conv #19 (D-ii fix #4): project the `bindings` field from the
+    // render fn instead of a hardcoded `''`. The render fn now emits
+    // `__svn_$$bindings('a', 'b')` for runes-mode components (literal
+    // union of `$bindable()` prop names) — projecting it through the
+    // 3rd generic threads that union to consumer-side `inst.$$bindings
+    // = 'NAME'` post-instance checks, where TS2322 fires when NAME
+    // isn't bindable.
+    let _ = writeln!(
+        buf,
+        "    Awaited<ReturnType<typeof {render_name}>>['bindings']"
+    );
     let _ = writeln!(buf, "> = null as any;");
     let _ = writeln!(
         buf,

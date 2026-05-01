@@ -14,13 +14,13 @@ async function $$render_7035891f() {
         (children?.());
     });
     void children;
-    return { props: undefined as any as ($$ComponentProps), events: undefined as any as $$Events, slots: undefined as any as {}, bindings: undefined as any as string, exports: undefined as any as ({}) };
+    return { props: undefined as any as ($$ComponentProps), events: undefined as any as $$Events, slots: undefined as any as {}, bindings: __svn_$$bindings(), exports: undefined as any as ({}) };
 }
 $$render_7035891f;
 const __svn_component_default: import('svelte').Component<
     Awaited<ReturnType<typeof $$render_7035891f>>['props'],
     Awaited<ReturnType<typeof $$render_7035891f>>['exports'],
-    ''
+    Awaited<ReturnType<typeof $$render_7035891f>>['bindings']
 > = null as any;
 type __svn_component_default = ReturnType<typeof __svn_component_default>;
 export default __svn_component_default;

@@ -380,11 +380,41 @@ pub struct ComponentInstantiation {
     /// svelte2tsx's `() => x = __sveltets_2_any(null);` shape in
     /// `htmlxtojsx_v2/nodes/InlineComponent.ts`.
     pub component_bind_widen_targets: Vec<SmolStr>,
+    /// `bind:NAME={…}` and bare `bind:NAME` directives on this
+    /// component (excluding `bind:this`). Each entry pairs the prop
+    /// NAME (what gets assigned to `inst.$$bindings`) with the
+    /// `bind:NAME` source range so the post-instance check's TS2322
+    /// reverse-maps to the directive span. Drives the D-ii bindings
+    /// cluster: emit writes `__svn_inst_N.$$bindings = 'NAME';` per
+    /// entry, the iso ctor's `$$bindings?: B` (where B is the literal
+    /// union of `$bindable()` props) fires TS2322 when NAME isn't
+    /// bindable, and upstream LS's `moveBindingErrorMessage` post-
+    /// filter rewrites the message into the user-visible "Cannot use
+    /// 'bind:' with this property. It is declared as non-bindable
+    /// inside the component." form. Mirrors upstream svelte2tsx
+    /// `htmlxtojsx_v2/nodes/Binding.ts:192-195`'s
+    /// `appendToStartEnd([\`${element.name}.$$bindings = '${attr.name}';\`])`.
+    pub bind_directives: Vec<BindDirective>,
     /// Byte offset of the `<Component` token in the source. Emit keys
     /// the prop-check on this to locate the correct enclosing scope
     /// (i.e. inside the right `{#each}` / `{#if}` / `{#snippet}` body)
     /// when re-walking the template fragment.
     pub node_start: u32,
+}
+
+/// One `bind:NAME={…}` / bare `bind:NAME` directive on a component
+/// instantiation. Excludes `bind:this` (lives in `bind_this_target`).
+/// Drives the post-instance `__svn_inst_N.$$bindings = 'NAME';`
+/// emission for the D-ii bindings cluster.
+#[derive(Debug, Clone)]
+pub struct BindDirective {
+    /// The prop name being bound (without the `bind:` prefix).
+    pub name: SmolStr,
+    /// Source byte range of `bind:NAME` — used as the TokenMap entry
+    /// for the literal `'NAME'` in the synthesised `inst.$$bindings =
+    /// 'NAME';` so TS2322 reverse-maps to the directive's source
+    /// position. `start` points at `bind:`, `end` at NAME-end.
+    pub range: Range,
 }
 
 /// One `on:event={handler}` directive on a component instantiation.
@@ -2086,6 +2116,7 @@ fn collect_instantiation_inner(
     let mut on_events: Vec<OnEventDirective> = Vec::new();
     let mut bind_this_target: Option<Range> = None;
     let mut component_bind_widen_targets: Vec<SmolStr> = Vec::new();
+    let mut bind_directives: Vec<BindDirective> = Vec::new();
     // Detect "implicit children": any non-snippet, non-whitespace
     // child node between the open/close tags. Pure `{#snippet}`
     // children hoist as explicit props (different code path); pure
@@ -2352,6 +2383,14 @@ fn collect_instantiation_inner(
                     if let Some(ident) = simple_identifier_in(source, *expression_range) {
                         component_bind_widen_targets.push(ident);
                     }
+                    // R-Conv #19 (D-ii fix #4): record the prop NAME +
+                    // `bind:NAME` source range so emit can write
+                    // `__svn_inst_N.$$bindings = 'NAME';` post-instance
+                    // for the literal-Bindings union check.
+                    bind_directives.push(BindDirective {
+                        name: d.name.clone(),
+                        range: d.range,
+                    });
                     continue;
                 }
                 // Bare shorthand `bind:NAME` desugars to
@@ -2386,8 +2425,12 @@ fn collect_instantiation_inner(
                     let name_end = name_start + target.len() as u32;
                     let name_range = svn_core::Range::new(name_start, name_end);
                     props.push(PropShape::Shorthand {
-                        name: target,
+                        name: target.clone(),
                         attr_range: name_range,
+                    });
+                    bind_directives.push(BindDirective {
+                        name: target,
+                        range: d.range,
                     });
                     continue;
                 }
@@ -2425,10 +2468,14 @@ fn collect_instantiation_inner(
                         PropShape::Spread { .. } => true,
                     });
                     props.push(PropShape::GetSetBinding {
-                        name: target,
+                        name: target.clone(),
                         getter_range: *getter_range,
                         setter_range: *setter_range,
                         attr_range: d.range,
+                    });
+                    bind_directives.push(BindDirective {
+                        name: target,
+                        range: d.range,
                     });
                     continue;
                 }
@@ -2465,6 +2512,7 @@ fn collect_instantiation_inner(
             on_events,
             bind_this_target,
             component_bind_widen_targets,
+            bind_directives,
             node_start: range_start,
         });
 }
