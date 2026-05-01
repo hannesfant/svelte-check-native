@@ -1292,7 +1292,7 @@ fn emit_document_with_render_name(
     // TS-only syntax sites inside (bind: casts, typed lets, each-block
     // `i: number = 0`) are conditionalized on `is_ts` by the
     // sub-emitters; JS overlays get JSDoc equivalents or plain lets.
-    emit_template_check_fn(&mut buf, doc, fragment, summary, is_ts);
+    emit_template_check_fn(&mut buf, doc, fragment, summary, is_ts, has_strict_slots_decl);
 
     let exported_locals: Vec<SmolStr> = split
         .as_ref()

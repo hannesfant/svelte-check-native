@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use crate::emit_buffer::EmitBuffer;
+use crate::emit_is_ts;
 use crate::nodes::action::{
     emit_dom_action_decls, emit_dom_action_void_refs, emit_use_directives_inline_legacy,
 };
@@ -82,6 +83,19 @@ pub(crate) fn emit_element_node(
 ) {
     let dom_emit = dom_element_emit_enabled() && e.name.as_str() != "slot";
     let inner_depth = if dom_emit { depth + 1 } else { depth };
+    // R-Conv #20 (B2 #3): emit `<slot>` as
+    // `__svn_create_slot("NAME", { ...attrs });` so each slot's name
+    // checks against `keyof $$Slots` (TS2345) and its props check
+    // against `$$Slots[Name]` (TS2322 / TS2353). Mirrors upstream
+    // svelte2tsx's `htmlxtojsx_v2/nodes/Slot.ts` shape. Emit BEFORE
+    // the children walk so slot fallback content type-checks
+    // independently. The companion `const __svn_create_slot = …`
+    // declaration lives at the top of the template-check fn body
+    // (`emit_template_check_fn`) gated on
+    // `fragment_contains_slot`.
+    if e.name.as_str() == "slot" && emit_is_ts() {
+        emit_slot_check(buf, source, e, depth);
+    }
     // Action declarations emitted BEFORE createElement so the
     // 3-arg overload can reference them in its second arg.
     let action_indices = if dom_emit {
@@ -772,4 +786,168 @@ pub(crate) fn element_type_annotation(tag_name: &str) -> String {
         return "HTMLElement".to_string();
     }
     format!("HTMLElementTagNameMap['{tag_name}']")
+}
+
+/// Emit a `__svn_create_slot("NAME", { prop1: <expr>, ... });` check
+/// for a `<slot>` element. The companion declaration `const
+/// __svn_create_slot = __svn_create_create_slot<$$Slots>();` lives at
+/// the top of the template-check fn body.
+///
+/// Source-mapping anchors:
+/// - The slot-name literal `"NAME"` carries a TokenMap entry covering
+///   the `name="…"` attribute value range (or the `<slot` token range
+///   when the name is implicit `default`). TS2345 fires here when
+///   `NAME` isn't in `keyof $$Slots`, matching upstream LS's
+///   diagnostic position.
+/// - Each attr's KEY position covers the source attr name (TS2353
+///   excess-prop fires here).
+/// - Each attr's VALUE expression carries its source expression range
+///   (TS2322 type-mismatch fires here).
+///
+/// Mirrors upstream svelte2tsx's
+/// `htmlxtojsx_v2/nodes/Slot.ts::handleSlot` shape.
+fn emit_slot_check(buf: &mut EmitBuffer, source: &str, e: &svn_parser::Element, depth: usize) {
+    use svn_parser::Attribute;
+    let inner = "    ".repeat(depth + 1);
+    let outer = "    ".repeat(depth);
+    let _ = writeln!(buf, "{outer}{{");
+    let _ = write!(buf, "{inner}__svn_create_slot(");
+    // Slot name: `name="X"` plain attr if present, else literal
+    // `"default"`. Source range maps to the `name` attribute's full
+    // span when present, or the `<slot` token's `slot` identifier
+    // otherwise.
+    let name_attr = e.attributes.iter().find_map(|a| match a {
+        Attribute::Plain(p) if p.name.as_str() == "name" => Some(p),
+        _ => None,
+    });
+    if let Some(p) = name_attr {
+        let (name, value_range) = match &p.value {
+            Some(v) => {
+                let text = source
+                    .get(v.range.start as usize..v.range.end as usize)
+                    .unwrap_or("");
+                let stripped = text.trim_start_matches(['"', '\''].as_ref())
+                    .trim_end_matches(['"', '\''].as_ref());
+                // Anchor on the inner content (`invalid`), not the
+                // surrounding quote. Upstream's TS2345 for unknown
+                // slot names points at the first byte of the literal
+                // text — quote excluded.
+                let inner_range = if v.quoted {
+                    svn_core::Range::new(v.range.start + 1, v.range.end.saturating_sub(1))
+                } else {
+                    v.range
+                };
+                (stripped.to_string(), inner_range)
+            }
+            None => ("default".to_string(), p.range),
+        };
+        let literal = format!("\"{}\"", name.replace('"', "\\\""));
+        buf.append_with_source(&literal, value_range);
+    } else {
+        // `<slot>` with no `name=` attr — implicit `"default"` slot.
+        // Anchor on the `<slot` token (5 bytes from `e.range.start +
+        // 1`) so any TS2345 from a missing `default` key in $$Slots
+        // reverse-maps onto the user's `<slot>` site.
+        let name_start = e.range.start.saturating_add(1);
+        let name_end = name_start.saturating_add(4); // "slot"
+        buf.append_with_source(
+            "\"default\"",
+            svn_core::Range::new(name_start, name_end),
+        );
+    }
+    buf.push_str(", { ");
+    // Slot props: every attr that isn't `name=`, emitted as
+    // `"propName": (expr)` with the propName carrying the source
+    // attr-name range and the expression carrying its source range.
+    let mut first = true;
+    for a in &e.attributes {
+        match a {
+            Attribute::Plain(p) if p.name.as_str() == "name" => continue,
+            Attribute::Plain(p) => {
+                if !first {
+                    buf.push_str(", ");
+                }
+                first = false;
+                emit_slot_prop_key(buf, p.name.as_str(), p.range);
+                buf.push_str(": ");
+                if let Some(v) = &p.value {
+                    let text = source
+                        .get(v.range.start as usize..v.range.end as usize)
+                        .unwrap_or("");
+                    buf.append_with_source(text, v.range);
+                } else {
+                    buf.push_str("true");
+                }
+            }
+            Attribute::Expression(ea) => {
+                if !first {
+                    buf.push_str(", ");
+                }
+                first = false;
+                emit_slot_prop_key(buf, ea.name.as_str(), ea.range);
+                buf.push_str(": (");
+                let expr = source
+                    .get(ea.expression_range.start as usize..ea.expression_range.end as usize)
+                    .unwrap_or("");
+                buf.append_with_source(expr, ea.expression_range);
+                buf.push_str(")");
+            }
+            Attribute::Shorthand(s) => {
+                if !first {
+                    buf.push_str(", ");
+                }
+                first = false;
+                let inner_text = source
+                    .get(s.range.start as usize + 1..s.range.end as usize)
+                    .unwrap_or("");
+                let leading_ws =
+                    (inner_text.len() - inner_text.trim_start().len()) as u32;
+                let name_start = s.range.start + 1 + leading_ws;
+                let name_end = name_start + s.name.len() as u32;
+                let name_range = svn_core::Range::new(name_start, name_end);
+                emit_slot_prop_key(buf, s.name.as_str(), name_range);
+                buf.push_str(": ");
+                buf.append_with_source(s.name.as_str(), name_range);
+            }
+            Attribute::Spread(sp) => {
+                if !first {
+                    buf.push_str(", ");
+                }
+                first = false;
+                buf.push_str("...(");
+                let expr = source
+                    .get(sp.expression_range.start as usize..sp.expression_range.end as usize)
+                    .unwrap_or("");
+                buf.append_with_source(expr, sp.expression_range);
+                buf.push_str(")");
+            }
+            Attribute::Directive(_) => {
+                // Directives on `<slot>` (e.g. `let:`) are not slot
+                // props — they bind names from the parent's scope.
+                // Skip from the type-check object.
+            }
+        }
+    }
+    buf.push_str(" });\n");
+    let _ = writeln!(buf, "{outer}}}");
+}
+
+/// Write a slot-prop key. Quotes the name when it isn't a simple JS
+/// identifier (e.g. CSS custom properties) and attaches a TokenMap
+/// entry so TS2353 excess-prop diagnostics reverse-map to the source
+/// attr-name span.
+fn emit_slot_prop_key(buf: &mut EmitBuffer, name: &str, range: svn_core::Range) {
+    let is_simple = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+    if is_simple {
+        buf.append_with_source(name, range);
+    } else {
+        let quoted = format!("\"{}\"", name.replace('"', "\\\""));
+        buf.append_with_source(&quoted, range);
+    }
 }

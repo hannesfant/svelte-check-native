@@ -9,6 +9,10 @@ async function $$render_17f189ba<T>() {
     let y = $derived(x * 2);
     ;(async () => {
         // template type-check body (incremental)
+        const __svn_create_slot = __svn_create_create_slot();
+        {
+            __svn_create_slot("default", { x: x, y: y });
+        }
     });
     void a;
     void b;

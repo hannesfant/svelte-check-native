@@ -26,6 +26,7 @@ use crate::emit_template_body;
 use crate::nodes::action::emit_legacy_action_attrs;
 use crate::process_instance_script_content::ExportedLocalInfo;
 use crate::props_emit::{synthesise_js_props_typedef_body, write_slots_field_type};
+use crate::svelte4;
 use svn_analyze::{TemplateSummary, scan_jsdoc_typedef_name, should_synthesise_js_props};
 
 /// Emit the `async function __svn_tpl_check() { … }` wrapper that
@@ -46,6 +47,7 @@ pub(crate) fn emit_template_check_fn(
     fragment: &svn_parser::Fragment,
     summary: &TemplateSummary,
     is_ts: bool,
+    has_strict_slots_decl: bool,
 ) {
     // Arrow expression statement (NOT a function declaration) — TS's
     // control-flow narrowing carries assignment-narrowed types from
@@ -57,6 +59,23 @@ pub(crate) fn emit_template_check_fn(
     // form preserves narrowing — see design/gap_c_assignment_narrowing/.
     buf.push_str("    ;(async () => {\n");
     buf.push_str("        // template type-check body (incremental)\n");
+    // R-Conv #20 (B2 #3): when the template has any `<slot>` element,
+    // declare `__svn_create_slot` once at the top of the check body
+    // so per-slot emit downstream can call it. With `interface
+    // $$Slots` declared, the helper's generic narrows to it; without,
+    // the `Record<string, Record<string, any>>` default keeps Svelte-4
+    // components silent. Mirrors upstream svelte2tsx's `;const
+    // __sveltets_createSlot = __sveltets_2_createCreateSlot<$$Slots>();`
+    // emission at `htmlxtojsx_v2/nodes/Slot.ts` + `addComponentExport.ts`.
+    if is_ts && svelte4::compat::fragment_contains_slot(fragment) {
+        if has_strict_slots_decl {
+            buf.push_str(
+                "        const __svn_create_slot = __svn_create_create_slot<$$Slots>();\n",
+            );
+        } else {
+            buf.push_str("        const __svn_create_slot = __svn_create_create_slot();\n");
+        }
+    }
     emit_legacy_action_attrs(buf.raw_string_mut(), summary, is_ts);
     emit_bind_pair_declarations(buf.raw_string_mut(), summary, is_ts);
     // Index component instantiations by source byte offset so the

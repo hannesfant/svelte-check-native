@@ -544,6 +544,34 @@ declare function __svn_get_set_binding<T>(
 ): T;
 
 /**
+ * Slot-prop type-checker factory. Mirrors upstream
+ * `__sveltets_2_createCreateSlot<Slots>` (svelte2tsx/svelte-shims-
+ * v4.d.ts:135) with the `__svn_*` prefix mandated by CLAUDE.md rule
+ * #6.
+ *
+ * Emit calls this once per render fn (gated on the presence of
+ * `<slot>` elements) and stashes the result in
+ * `const __svn_create_slot = __svn_create_create_slot<$$Slots>();`.
+ * Each `<slot name="X" prop1={…} prop2={…}>` then emits as
+ * `__svn_create_slot("X", { prop1: …, prop2: … });` — the inner
+ * call's signature checks the slot name against `keyof $$Slots`
+ * (TS2345 on unknown names) and the attrs object against
+ * `$$Slots[Name]` (TS2322 on prop type mismatches, TS2353 on excess
+ * props).
+ *
+ * When no `interface $$Slots` is declared, the default
+ * `Record<string, Record<string, any>>` keeps every slot+attr pair
+ * silent — Svelte-4 components that opt out of strict slot typing
+ * pay no false-positive cost.
+ */
+declare function __svn_create_create_slot<
+    Slots = Record<string, Record<string, any>>,
+>(): <SlotName extends keyof Slots>(
+    slotName: SlotName,
+    attrs: Slots[SlotName],
+) => Record<string, any>;
+
+/**
  * Carries the literal-string union of bindable prop names through
  * the render-fn's `bindings:` field for runes-mode components.
  * Mirrors upstream `__sveltets_$$bindings` (svelte2tsx/svelte-shims-

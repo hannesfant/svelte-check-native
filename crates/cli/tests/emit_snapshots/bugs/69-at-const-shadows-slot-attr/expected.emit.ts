@@ -5,9 +5,13 @@ async function $$render_ca1b293f() {
     let item = { id: 1 };
     ;(async () => {
         // template type-check body (incremental)
+        const __svn_create_slot = __svn_create_create_slot();
         for (const one of __svn_each_items([item])) {
             const expanded = one.id;
             void expanded;
+            {
+                __svn_create_slot("default", { expanded: expanded });
+            }
             void one;
         }
     });

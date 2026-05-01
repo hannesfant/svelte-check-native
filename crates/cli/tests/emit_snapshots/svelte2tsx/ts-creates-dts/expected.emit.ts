@@ -16,9 +16,13 @@ async function $$render_39dbed3c() {
   const dispatch = createEventDispatcher<{swipe: string}>();
     ;(async () => {
         // template type-check body (incremental)
+        const __svn_create_slot = __svn_create_create_slot();
         { svelteHTML.createElement("button", {
             "on:click": undefined,
         });
+        }
+        {
+            __svn_create_slot("default", { bar: bar });
         }
     });
     void bar;

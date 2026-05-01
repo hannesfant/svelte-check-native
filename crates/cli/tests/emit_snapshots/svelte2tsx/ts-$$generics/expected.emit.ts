@@ -24,6 +24,10 @@ async function $$render_7c9879e0() {
     }
     ;(async () => {
         // template type-check body (incremental)
+        const __svn_create_slot = __svn_create_create_slot();
+        {
+            __svn_create_slot("default", { c: c });
+        }
     });
     void c;
     void a;

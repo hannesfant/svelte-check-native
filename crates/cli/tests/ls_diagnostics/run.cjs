@@ -108,7 +108,7 @@ const SKIP_LIST = {
 
     // bucket=overlay-positions: same code categories, different counts
     '$$props-invalid3': 'tsgo-divergence: tsgo emits inner TS2741 (missing-prop) where tsc/upstream LS emits TS2345 wrap',
-    '$$slots': 'overlay-counts: 2322/2345/2353 multiset diverges',
+    // (was '$$slots' here — closed by R-Conv #20 B2 #3, __svn_create_slot synthesis)
     '$store-wrong-usage': 'overlay-counts: 2769 fires 6× upstream, 0× ours',
     'accessors-customElement-configs': 'overlay-counts: 2322 extra in our overlay',
     'actions-animations-transitions-typechecks': 'tsgo-divergence: 1/2 fires (transition:draw), action call fires 2740 (tsgo) where expected 2345 (tsc)',

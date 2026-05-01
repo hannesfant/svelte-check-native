@@ -22,7 +22,14 @@ async function $$render_ea0f0d34() {
     let b = 7;
     ;(async () => {
         // template type-check body (incremental)
-        { svelteHTML.createElement("div", {});         }
+        const __svn_create_slot = __svn_create_create_slot<$$Slots>();
+        { svelteHTML.createElement("div", {});             {
+                __svn_create_slot("default", { a: (b) });
+            }
+            {
+                __svn_create_slot("foo", { b: b });
+            }
+        }
     });
     void b;
     return { props: undefined as any as (Record<string, never>), events: undefined as any as { [evt: string]: CustomEvent<any> }, slots: undefined as any as $$Slots, bindings: undefined as any as string, exports: undefined as any as ({}) };
