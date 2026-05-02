@@ -159,8 +159,27 @@ pub(crate) fn emit_element_bind_checks_inline(
             Some(range) => buf.append_with_source(&expr_text, range),
             None => buf.push_str(&expr_text),
         }
+        // R-Conv #20: for `<svelte:element this={tagExpr} bind:this={target}>`
+        // narrow the RHS through `svelteHTML.createElement(tagExpr, {})` so
+        // when `tagExpr` is a literal type (e.g. `'div'`), TS resolves the
+        // return to `HTMLDivElement` instead of the loose `HTMLElement`
+        // annotation. Mirrors upstream svelte2tsx's
+        // `const $$_svelteelement0 = svelteHTML.createElement(tag, {…});
+        // target = $$_svelteelement0;` shape (Element.ts).
+        let svelte_element_this_expr =
+            (tag_name.is_empty() && name == "this").then(|| svelte_element_tag_expr(attributes, source)).flatten();
         if emit_is_ts() {
-            let _ = writeln!(buf, " = null as any as {ty};");
+            if let Some((tag_expr, tag_range)) = &svelte_element_this_expr {
+                buf.push_str(" = svelteHTML.createElement(");
+                buf.append_with_source(tag_expr, *tag_range);
+                buf.push_str(", {});\n");
+            } else {
+                let _ = writeln!(buf, " = null as any as {ty};");
+            }
+        } else if let Some((tag_expr, tag_range)) = &svelte_element_this_expr {
+            buf.push_str(" = svelteHTML.createElement(");
+            buf.append_with_source(tag_expr, *tag_range);
+            buf.push_str(", {});\n");
         } else {
             // JS overlay: `as T` is TS-only syntax. Use a JSDoc cast
             // on the RHS instead — `/** @type {T} */(null)` gives the
@@ -170,4 +189,34 @@ pub(crate) fn emit_element_bind_checks_inline(
             let _ = writeln!(buf, " = /** @type {{{ty}}} */ (null);");
         }
     }
+}
+
+/// Extract the `this={EXPR}` expression text + source range from a
+/// `<svelte:element>`'s attribute list. Used to narrow the
+/// `bind:this={target}` RHS through `svelteHTML.createElement(EXPR,
+/// {})` so a literal-typed `tag: 'div'` produces `HTMLDivElement`
+/// (not the loose `HTMLElement` fallback).
+fn svelte_element_tag_expr<'a>(
+    attributes: &[svn_parser::Attribute],
+    source: &'a str,
+) -> Option<(std::borrow::Cow<'a, str>, svn_core::Range)> {
+    for attr in attributes {
+        let svn_parser::Attribute::Expression(e) = attr else {
+            continue;
+        };
+        if e.name.as_str() != "this" {
+            continue;
+        }
+        let slice =
+            source.get(e.expression_range.start as usize..e.expression_range.end as usize)?;
+        let trimmed = slice.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let leading_ws = (slice.len() - slice.trim_start().len()) as u32;
+        let start = e.expression_range.start + leading_ws;
+        let end = start + trimmed.len() as u32;
+        return Some((std::borrow::Cow::Borrowed(trimmed), svn_core::Range::new(start, end)));
+    }
+    None
 }

@@ -125,7 +125,7 @@ const SKIP_LIST = {
     'getters': 'overlay-counts: 2367 vs 2749 mismatch',
     // (was 'snippet-js.v5' — closed by R-Conv #20 B2 #4: typed JS snippet hoist + if-condition TokenMap)
     'strictEvents': 'overlay-counts: 2345 missing',
-    'svelte-element': 'overlay-counts: 2353 missing, 2322/2741/7006 extra',
+    // (was 'svelte-element' — closed by R-Conv #20: svelte:element bind:this narrows via createElement)
 
     // bucket=position-drift was here. All three entries
     // (`$store-bind`, `script-boolean-not-assignable-to-string`,
