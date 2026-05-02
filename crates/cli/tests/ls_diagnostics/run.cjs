@@ -97,7 +97,7 @@ const SKIP_LIST = {
     'svelte-element-error': 'missing-code: -1 svelte-compiler parser error path differs',
     // (was 'unInitialized' — closed by R-Conv #20 B2 #5: drop blanket def_assign_names from typed-uninit lets)
     'bind-this': 'missing-code: 2322/2454/6133 mix not all surfaced',
-    'undeclared-component': 'missing-code: 2304 cannot-find-name on auto-imported components',
+    // (was 'undeclared-component' — closed by R-Conv #20: append_with_source on component name)
     // (was 'ignore-generated-code' — bonus unblock from R-Conv #20 B2 #4 if-condition TokenMap)
 
     // bucket=svelte-shim-resolution / structural

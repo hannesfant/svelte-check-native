@@ -261,10 +261,23 @@ pub(crate) fn emit_component_call(
     };
 
     let _ = writeln!(buf, "{indent}{{");
-    let _ = writeln!(
-        buf,
-        "{inner}const {local} = __svn_ensure_component({comp});"
-    );
+    // R-Conv #20: splice the component name with append_with_source
+    // when it's a simple identifier (regular `<Component>` /
+    // `<svelte:self>` doesn't need it because the root is the synth
+    // `__svn_self_default`; `<svelte:component this={X}>` synth
+    // `(X)` shape carries its own range). TS2304 ("Cannot find
+    // name 'Component'") then reverse-maps to the user's
+    // `<Component>` source span instead of getting dropped as
+    // synth-scaffolding.
+    let _ = write!(buf, "{inner}const {local} = __svn_ensure_component(");
+    if is_simple_js_identifier(comp.as_str()) {
+        let name_start = inst.node_start.saturating_add(1);
+        let name_end = name_start.saturating_add(comp.len() as u32);
+        buf.append_with_source(comp.as_str(), svn_core::Range::new(name_start, name_end));
+    } else {
+        buf.push_str(comp.as_str());
+    }
+    buf.push_str(");\n");
 
     // Implicit-children synthesis: when the user has non-snippet body
     // content, inject `"children": () => __svn_snippet_return()` into
