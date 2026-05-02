@@ -4,6 +4,152 @@ All notable changes to `svelte-check-native` will be documented in this
 file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0]
+
+Minor release. 149 commits of upstream-parity convergence. The
+LS-diagnostic fixture suite (78 upstream language-server
+diagnostic fixtures, strict `(file, line, character, code)`
+matching) climbed from **35 → 53 passing** through 22 R-Conv
+rounds. Bench parity held identical to the v0.7.0 baseline:
+control-rigs at 1124/0/2/2 and 1357/0/49/17 throughout. No
+regressions; every commit moved overlay shape closer to upstream
+svelte2tsx.
+
+### Added
+
+- **`--include-suggestions` CLI flag.** Default off — preserves
+  v0.7.x bench-parity bytes-identical. With it, hint-severity
+  diagnostics (TS6133 / 6192 / 6196 / 6385 / 6387) flow through
+  as `severity: "HINT"` in machine-output, matching upstream
+  language-server's `getSuggestionDiagnostics` semantics.
+  Required for editor integrations parity-checking against
+  language-server expectations. Implementation: appends
+  `--noUnusedLocals` and `--noUnusedParameters` to tsgo's argv
+  when on, then post-classifies the surfaced codes to Hint with
+  a same-line-import-error filter that mirrors upstream LS's
+  behaviour (drops 6133 on `import` lines that ALSO carry
+  TS2307 — matches upstream's expectation that unresolved-module
+  symbols don't flag as unused).
+- **Per-diagnostic bench parity mode.** `bench.mjs --mode parity
+  --diagnostic-detail` now runs ours + upstream + upstream
+  `--tsgo` with `--output machine-verbose` and prints symmetric
+  diff per (file, line, col, code) tuple. Per-bench allowlist
+  at `bench/.parity-exceptions.json` (only path under `bench/`
+  tracked in git); stale entries decay with a warning so the
+  file stays current.
+- **SvelteKit test-app bench targets.**
+  `scripts/bootstrap-kit-bench.mjs` shallow-clones
+  `sveltejs/kit` into `bench/_kit/` and `pnpm install`s at the
+  monorepo root. Each app under `packages/kit/test/apps/` then
+  works as a `bench.mjs --target` arg — useful for
+  framework-author-specific edge cases (`amp`, `dev-only`,
+  `embed`) the real-world bench fleet doesn't exercise.
+
+### Emit-shape parity gains
+
+- **Event surface ported in full.** Replaces the pre-v0.7.2
+  partial coverage with full upstream parity:
+  `createEventDispatcher` detection moved to AST-based scanning
+  (was substring scan); typed dispatcher event projection;
+  untyped synthesis from string-literal calls; bubbled DOM events
+  from `<Child on:NAME />`; `svelte:body` / `svelte:window` event
+  projection; `<svelte:component>` / `<svelte:self>` /
+  `<svelte:boundary>` instantiation through the same walker;
+  `strictEvents`-attr and runes-mode `$$Events` synthesis;
+  multi-import alias resolution; precise event-name typing on
+  child-component event directives.
+- **SlotHandler port (Stages 1-7).** Upstream's
+  `SlotHandler.ts` (slot-attr expression rewriting + slot-def
+  model + each/await/let-forwarded resolution) ported in seven
+  stages. `$$Slots` interface override emission, multi-part attr
+  emission, and slot-attr shadow-stack scoping all fall out of
+  this work. Closes the LS fixture `$$slots` and unblocks
+  consumer-side typed slot scenarios across the bench fleet.
+- **Runes void-emit selectivity** (R-Conv #21, V5 Phase 4). For
+  `$props()` destructure entries, only `$bindable()` props get
+  the post-decl `void <name>;` reference — non-bindable entries
+  are exposed for upstream-style TS6133 firing under user
+  tsconfigs that opt into `noUnusedLocals: true`. Mirrors
+  upstream `ExportedNames.ts:197-204` byte-for-byte.
+- **`data-*` attribute `__svn_empty` wrap.** Closes a
+  long-standing divergence: `should_skip` in
+  `crates/emit/src/nodes/attribute.rs` previously dropped
+  `data-*` attribute value expressions entirely. v0.7.2's
+  blanket void emission masked the consequence; V5 Phase 4's
+  selective void exposed it as TS6133 on identifiers used only
+  via `data-foo={prop}`. Fix: new `__svn_empty` shim mirroring
+  upstream `__sveltets_2_empty` (svelte-shims-v4.d.ts:139),
+  emitted as `...__svn_empty({"data-foo": value})` —
+  type-erasing spread that injects nothing into the strict
+  typed-attr interface but keeps the value referenced.
+  Carve-out for `data-sveltekit-*` (typed by svelte-jsx
+  directly, no wrap) — matches upstream `Attribute.ts:86`
+  predicate exactly.
+
+### Architecture
+
+- **`walk_statement_descend` canonical Statement visitor.**
+  Extracted `crates/analyze/src/ast_walk.rs` with a single
+  visitor + `WalkNode` enum; ported all 7 ad-hoc Statement
+  walkers (dispatcher locals, source-order dispatcher,
+  slot-attr rewriter, etc.) onto it. Compiler-enforced
+  exhaustiveness on `Statement` variants closes the bug class P3
+  of `notes/PARITY_TESTING_PLAN.md` calls out — every new oxc
+  Statement variant we don't handle becomes a build error rather
+  than a silent skip. Same discipline on the expression side via
+  `collect_function_body_stmts`.
+
+### LS-diagnostic suite — 22 R-Conv rounds (35 → 53 passing)
+
+Each round closes one cluster of upstream-LS divergences,
+locked by strict-position assertions. Selected highlights:
+
+- **#1-#9 foundational**: component-bind name anchor, style-
+  directive bare arm, `__svn_each_items` constraint,
+  alt-language script suppression, `__svn_ensure_right_props`
+  for `$$Props`, fallback `SvelteHTMLElements`, transition
+  wrapper + TS2554 filter, shim infer-constraints.
+- **#10-#13 D-iii slot-let port**: no-shadow scoping, TokenMap
+  + void suppress, slot-let suppresses implicit children.
+- **#14-#18**: snippet props post-instance destructure, cache
+  ambient skip when user has one, JS overlay `@ts-check` hoist
+  + JSDoc preserve, draw shim + transition token-map,
+  `{#await}` promise expression token-map.
+- **#19 D-ii**: Svelte-4 `export function` / `export class` as
+  bindable prop, Component shim shape, literal `$$bindings`
+  post-instance check.
+- **#20 Batch 2**: pug post-filter, `<slot>` synthesis via
+  `__svn_create_slot<$$Slots>()`, JS snippet hoist + JSDoc-aware
+  destructure, `$$Generic` class-wrapper, drop blanket
+  `def_assign_names` from typed-uninit lets, `svelte:element`
+  bind:this narrows via createElement, TokenMap on component
+  name in `__svn_ensure_component`.
+- **#21-#22 V5 priority**: runes void-emit selectivity (Phase 4),
+  hint-severity surfacing via `--include-suggestions` (Phase 5).
+  Closes the V5 priority fixture set:  `snippet-js.v5`,
+  `implicit-snippet.v5`, `$bindable-reassign.v5`.
+
+Remaining 25 skipped fixtures cluster in three buckets — tracked
+in `notes/LS_CONVERGENCE_*.md`:
+
+- `svelte-shim-resolution` (4) — TS2307 cannot-find-module
+  'svelte' in fixtures dir (highest leverage, cascades 4-6
+  fixtures).
+- `missing-code` (~6) — TS6385/6387 deprecation hints (tsgo
+  CLI doesn't emit), parser-error path.
+- `overlay-counts` (~10) — overlay-shape gaps + tsgo-divergence
+  cases.
+
+### Build hygiene note
+
+`scripts/bench.mjs::wipeCaches` only wipes `.svelte-check/` and
+`node_modules/.cache/svelte-check-native/`. SvelteKit-generated
+`$types`/route metadata in `.svelte-kit/types/` can persist
+across runs and silently poison overlay measurements. Wipe
+`.svelte-kit/` manually before any release-time parity sweep —
+recipe in `notes/BENCH.md` and `CLAUDE.md`. Tracked as the one
+open item in `notes/OPEN.md`.
+
 ## [0.7.2]
 
 Patch release. Five emit fixes that land on real-world SvelteKit
