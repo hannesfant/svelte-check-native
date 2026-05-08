@@ -1,0 +1,11 @@
+{
+    "errors": [
+        {
+            "file": "Broken.svelte",
+            "line": 1,
+            "column": 10,
+            "code": 2322
+        }
+    ],
+    "_note": "Issue #16: A markup-only `.svelte` file (no <script>) emits a `.svelte.svn.js` overlay. Pre-fix the overlay tsconfig listed every generated overlay in `compilerOptions.files`; without `allowJs: true` (the tsgo default), tsgo fired TS6504 on the `.svn.js` and aborted diagnostic emission for the whole program — silently zeroing the real TS2322 in `Broken.svelte`. The fix mirrors upstream svelte-check's `incremental.ts:writeOverlayTsconfig`: overlay files reach tsgo via `include` glob projection (cache-mirror `.svelte → .d.svelte.ts` + `**/*.{ts,js}` under `<cache>/svelte/`), not via the explicit `files` list. With `Markup.svelte` no longer in `files`, TS6504 never fires; the TS2322 in `Broken.svelte` surfaces."
+}
