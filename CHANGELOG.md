@@ -4,6 +4,25 @@ All notable changes to `svelte-check-native` will be documented in this
 file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Markup-only `.svelte` files no longer silently zero out every
+  diagnostic.** A `.svelte` file with no `<script>` tag (or a
+  `<script>` without `lang="ts"`) emits a `.svelte.svn.js` overlay.
+  Pre-fix every overlay landed in the overlay tsconfig's
+  `compilerOptions.files`; listing a `.js` file there made tsgo
+  fire TS6504 ("file is a JavaScript file. Did you mean to enable
+  the 'allowJs' option?") fatally under the default `allowJs:
+  false`, aborting diagnostic emission for the entire program and
+  silently masking real errors elsewhere. `.svn.js` overlays now
+  reach tsgo through a `<cache>/svelte/**/*.svn.js` `include`
+  glob instead — tsgo's own `allowJs` gate decides whether to
+  load them, matching upstream `svelte-check` parity (a `.js`
+  overlay only enters upstream's program when the user opted into
+  `allowJs: true`). Closes #16.
+
 ## [0.8.3]
 
 Patch release. One user-reported false positive.
