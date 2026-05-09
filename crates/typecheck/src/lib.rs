@@ -261,6 +261,17 @@ pub fn check(
     // declaration that the `svelte` package ships.
     let mut generated_paths: Vec<PathBuf> = Vec::with_capacity(inputs.len());
     let mut kit_overlay_sources: Vec<PathBuf> = Vec::new();
+    // Source `.svelte` paths handed to the overlay's `exclude` so tsgo
+    // never tries to load the raw `.svelte` file from the user's tree —
+    // it always reaches the overlay through the `.d.svelte.ts`
+    // re-export chain (or, currently, through `compilerOptions.files`
+    // listing the `.svn.ts` directly). Mirrors upstream's
+    // `upsertedExcludes` at `incremental.ts:430-431`. Today this is a
+    // no-op (tsgo doesn't load `.svelte` files anyway because their
+    // extension isn't on its program-input list), but keeping it in
+    // place is the structural pre-req for moving overlays out of
+    // `files` while still keeping `.svelte` patterns in `include`.
+    let mut source_svelte_paths: Vec<PathBuf> = Vec::with_capacity(inputs.len());
     let mut map_data: std::collections::HashMap<PathBuf, MapData> =
         std::collections::HashMap::with_capacity(inputs.len());
     // Track every cache file we touch this run. Anything in
@@ -449,6 +460,9 @@ pub fn check(
         if !matches!(input.kind, InputKind::SvelteAuxiliary) && !is_js_overlay {
             generated_paths.push(gen_path);
         }
+        if matches!(input.kind, InputKind::Svelte | InputKind::SvelteAuxiliary) {
+            source_svelte_paths.push(input.source_path.clone());
+        }
     }
 
     // Step 1a: garbage-collect orphaned overlay files. A `.svelte`
@@ -491,6 +505,7 @@ pub fn check(
         user_tsconfig,
         &generated_paths,
         &kit_overlay_sources,
+        &source_svelte_paths,
         kit_types_mirror.as_deref(),
         kit_app_ambients.as_deref(),
     );

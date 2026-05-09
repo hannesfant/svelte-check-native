@@ -49,6 +49,7 @@ pub fn build(
     user_tsconfig: &Path,
     generated_files: &[std::path::PathBuf],
     kit_overlay_sources: &[std::path::PathBuf],
+    source_svelte_paths: &[std::path::PathBuf],
     kit_types_mirror: Option<&Path>,
     kit_app_ambients: Option<&Path>,
 ) -> Value {
@@ -505,6 +506,19 @@ pub fn build(
     for p in kit_overlay_sources {
         excludes.push(p.to_string_lossy().into_owned());
     }
+    // Source `.svelte` paths from the manifest. Mirrors upstream's
+    // `upsertedExcludes` (`incremental.ts:430-431`). Today a no-op
+    // because tsgo doesn't load raw `.svelte` files anyway, but the
+    // structural pre-req for steps 2-5 of the parity refactor —
+    // removing `drop_svelte_only` from include filtering means
+    // `*.svelte` patterns in `include` become live, and `exclude`
+    // here is what stops tsgo from following them to source files.
+    for p in source_svelte_paths {
+        let s = p.to_string_lossy().into_owned();
+        if !excludes.contains(&s) {
+            excludes.push(s);
+        }
+    }
     if !excludes.is_empty() {
         overlay.insert("exclude".into(), json!(excludes));
     }
@@ -836,7 +850,7 @@ mod tests {
         let gen_files = vec![PathBuf::from(
             "/projects/app/.svelte-check/svelte/++Index.svelte.ts",
         )];
-        let overlay = build(&layout, &user_ts, &gen_files, &[], None, None);
+        let overlay = build(&layout, &user_ts, &gen_files, &[], &[], None, None);
 
         let opts = &overlay["compilerOptions"];
         assert_eq!(opts["noEmit"], json!(true));
@@ -849,7 +863,7 @@ mod tests {
     fn build_overlay_extends_user_tsconfig_relatively() {
         let layout = CacheLayout::for_workspace("/projects/app");
         let user_ts = PathBuf::from("/projects/app/tsconfig.json");
-        let overlay = build(&layout, &user_ts, &[], &[], None, None);
+        let overlay = build(&layout, &user_ts, &[], &[], &[], None, None);
         // extends should point ../tsconfig.json (overlay is in
         // /projects/app/.svelte-check/, user ts in /projects/app/).
         assert_eq!(overlay["extends"], json!("../tsconfig.json"));
@@ -863,7 +877,7 @@ mod tests {
             PathBuf::from("/projects/app/.svelte-check/svelte/++A.svelte.ts"),
             PathBuf::from("/projects/app/.svelte-check/svelte/sub/++B.svelte.ts"),
         ];
-        let overlay = build(&layout, &user_ts, &gen_files, &[], None, None);
+        let overlay = build(&layout, &user_ts, &gen_files, &[], &[], None, None);
         let files = overlay["files"].as_array().unwrap();
         // 2 generated + 1 svelte-shims.d.ts = 3.
         assert_eq!(files.len(), 3);
@@ -879,7 +893,7 @@ mod tests {
         // svelte/* modules.
         let layout = CacheLayout::for_workspace("/projects/app");
         let user_ts = PathBuf::from("/projects/app/tsconfig.json");
-        let overlay = build(&layout, &user_ts, &[], &[], None, None);
+        let overlay = build(&layout, &user_ts, &[], &[], &[], None, None);
         let files = overlay["files"].as_array().unwrap();
         assert_eq!(files.len(), 1);
         assert!(files[0].as_str().unwrap().ends_with("svelte-shims.d.ts"));
@@ -937,7 +951,7 @@ mod tests {
         );
 
         let layout = CacheLayout::for_workspace(&ws);
-        let overlay = build(&layout, &user_ts, &[], &[], None, None);
+        let overlay = build(&layout, &user_ts, &[], &[], &[], None, None);
 
         let opts = &overlay["compilerOptions"];
         // rootDirs union includes svelte cache, workspace, AND the
@@ -1012,7 +1026,7 @@ mod tests {
         write_file(&user_ts, r#"{ "extends": "../configs/base.json" }"#);
 
         let layout = CacheLayout::for_workspace(&project_dir);
-        let overlay = build(&layout, &user_ts, &[], &[], None, None);
+        let overlay = build(&layout, &user_ts, &[], &[], &[], None, None);
 
         let opts = &overlay["compilerOptions"];
 
@@ -1082,7 +1096,7 @@ mod tests {
         write_file(&user_ts, r#"{ "extends": ["./a.json", "./b.json"] }"#);
 
         let layout = CacheLayout::for_workspace(&ws);
-        let overlay = build(&layout, &user_ts, &[], &[], None, None);
+        let overlay = build(&layout, &user_ts, &[], &[], &[], None, None);
 
         let paths = overlay["compilerOptions"]["paths"].as_object().unwrap();
         // Both entries flow through to the overlay — BFS per-pattern
@@ -1161,7 +1175,7 @@ mod tests {
             &console_dir,
             Some(root.join("tsconfig.json")),
         );
-        let overlay = build(&layout, &console_ts, &[], &[], None, None);
+        let overlay = build(&layout, &console_ts, &[], &[], &[], None, None);
 
         // `include`: the services' `**/*.ts`, anchored at services'
         // project_dir.
@@ -1239,6 +1253,7 @@ mod tests {
         let overlay = build(
             &layout,
             &app_dir.join("tsconfig.json"),
+            &[],
             &[],
             &[],
             None,
