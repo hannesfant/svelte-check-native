@@ -450,12 +450,31 @@ pub fn build(
     // silently zeroed every other diagnostic (issue #16) — reaching
     // them via `include` instead lets tsgo's own `allowJs` gate
     // decide whether to load them, matching upstream svelte-check
-    // parity. `.svelte.svn.ts` overlays continue to land in
-    // `compilerOptions.files` directly via `generated_files` (no
-    // glob needed for them — they're plain TypeScript).
+    // parity.
     let cache_js_overlay_glob = format!("{}/**/*.svn.js", layout.svelte_dir.to_string_lossy());
     if !user_includes.contains(&cache_js_overlay_glob) {
         user_includes.push(cache_js_overlay_glob);
+    }
+    // Ambient-sidecar include glob — `<cache>/svelte/**/*.d.svelte.ts`.
+    // Each `<File>.d.svelte.ts` re-exports from
+    // `./<File>.svelte.svn.ts`, so once tsgo's program-construction
+    // sees a `.d.svelte.ts` it follows the re-export and pulls the
+    // `.svn.ts` overlay into the program transitively. This is the
+    // chain that lets us drop `.svn.ts` from `compilerOptions.files`
+    // (step 4) while still type-checking every overlay. Mirrors
+    // upstream's `virtualInclude` (`incremental.ts:427`) which
+    // projects each user `.svelte` pattern into a parallel
+    // `<svelte/>**/*.d.svelte.ts` form. Today (pre step 4) the
+    // sidecar reaches the program either way — via this glob OR via
+    // resolution from a user `.ts` module that imports a `.svelte` —
+    // but adding the glob makes the chain reachable BEFORE we drop
+    // the direct files-listing.
+    let cache_dts_glob = format!(
+        "{}/**/*.d.svelte.ts",
+        layout.svelte_dir.to_string_lossy()
+    );
+    if !user_includes.contains(&cache_dts_glob) {
+        user_includes.push(cache_dts_glob);
     }
 
     let mut overlay = serde_json::Map::new();
