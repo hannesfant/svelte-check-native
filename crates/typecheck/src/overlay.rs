@@ -383,11 +383,12 @@ pub fn build(
     // generated overlays we list in `files`. Patterns are emitted as
     // absolute path globs so the tsconfig works regardless of the
     // overlay's location relative to the workspace.
-    // Inner wins for include/exclude. `include` drops `.svelte`-only
-    // patterns since our generated overlays in `files` already cover
-    // them; `exclude` keeps everything (dropping a pattern opens a
-    // hole).
-    let mut user_includes = first_non_empty_patterns(&chain, |f| f.include.as_deref(), true);
+    // Inner wins for include/exclude. `.svelte` patterns flow
+    // through verbatim now that source `.svelte` paths land in
+    // `exclude` — tsgo never tries to read raw `.svelte` files even
+    // when the include glob would match them. Mirrors upstream
+    // (`incremental.ts:417` keeps user `include` patterns as-is).
+    let mut user_includes = first_non_empty_patterns(&chain, |f| f.include.as_deref());
     // Redirect `.svelte-kit/types/**/$types.d.ts` includes to the
     // cache mirror (when present). Load-bearing companion to the
     // mirror+rootDirs setup: without this redirect the user's
@@ -427,9 +428,6 @@ pub fn build(
             }
         } else {
             for pat in &sibling.include {
-                if is_svelte_only_pattern(pat) {
-                    continue;
-                }
                 let resolved = if Path::new(pat).is_absolute() {
                     PathBuf::from(pat)
                 } else {
@@ -481,8 +479,7 @@ pub fn build(
     // Only emit the field if at least one source contributed — an
     // empty `exclude` field in our overlay would clobber the user's
     // inherited exclude with an empty list.
-    let mut excludes: Vec<String> =
-        first_non_empty_patterns(&chain, |f| f.exclude.as_deref(), false);
+    let mut excludes: Vec<String> = first_non_empty_patterns(&chain, |f| f.exclude.as_deref());
     // Each sibling reference's own `exclude` patterns, anchored at
     // that reference's project_dir. Critical for preserving user
     // intent — app's tsconfig.playwright.json excludes binary
@@ -554,15 +551,7 @@ fn mirror_into_overlay(layout: &CacheLayout, path_str: &str) -> Option<String> {
 /// absolute-path globs work regardless of where the overlay tsconfig
 /// itself lives.
 ///
-/// `drop_svelte_only` filters patterns that only match raw `.svelte`
-/// files — valid for `include` (our generated `.svelte.ts` overlays in
-/// `files` already cover that surface) but NOT for `exclude`, where
-/// dropping a pattern would open a hole.
-fn first_non_empty_patterns<F>(
-    chain: &[TsConfigFile],
-    get: F,
-    drop_svelte_only: bool,
-) -> Vec<String>
+fn first_non_empty_patterns<F>(chain: &[TsConfigFile], get: F) -> Vec<String>
 where
     F: Fn(&TsConfigFile) -> Option<&[String]>,
 {
@@ -573,9 +562,6 @@ where
         let dir = file.config_dir();
         let mut out: Vec<String> = Vec::new();
         for s in patterns {
-            if drop_svelte_only && is_svelte_only_pattern(s) {
-                continue;
-            }
             let resolved = if Path::new(s).is_absolute() {
                 PathBuf::from(s)
             } else {
@@ -588,15 +574,6 @@ where
         }
     }
     Vec::new()
-}
-
-/// True when an include pattern is only meaningful for raw `.svelte`
-/// files — those are handled by our overlay's generated `.svelte.ts`
-/// files in the `files` array, so dropping the pattern keeps tsgo from
-/// trying to load the original `.svelte` source as TypeScript.
-fn is_svelte_only_pattern(pattern: &str) -> bool {
-    let trimmed = pattern.trim_end_matches('/');
-    trimmed.ends_with(".svelte")
 }
 
 /// True when a `types` entry will resolve under tsgo's lookup rules.
