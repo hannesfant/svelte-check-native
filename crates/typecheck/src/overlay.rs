@@ -441,34 +441,43 @@ pub fn build(
         }
     }
 
-    // JS-overlay include glob — `<cache>/svelte/**/*.svn.js`. Picks
-    // up `.svelte.svn.js` overlays (script-less `.svelte` or
-    // `<script>` without `lang="ts"`) so they enter the program when
-    // the user's effective tsconfig has `allowJs: true`. Listing
-    // them in `compilerOptions.files` directly is what triggered
-    // tsgo's TS6504 fatal under the default `allowJs: false` and
-    // silently zeroed every other diagnostic (issue #16) — reaching
-    // them via `include` instead lets tsgo's own `allowJs` gate
-    // decide whether to load them, matching upstream svelte-check
-    // parity.
-    let cache_js_overlay_glob = format!("{}/**/*.svn.js", layout.svelte_dir.to_string_lossy());
-    if !user_includes.contains(&cache_js_overlay_glob) {
-        user_includes.push(cache_js_overlay_glob);
+    // Per-pattern virtual projection. For every workspace-anchored
+    // user/sibling include pattern, push a parallel pattern pointing
+    // into `<cache>/svelte/` with `.svelte` rewritten to
+    // `.d.svelte.ts`. Mirrors upstream's `virtualInclude` shape
+    // (`incremental.ts:427` + `toVirtualSvelteDtsSpec` at :963-966).
+    //
+    // `.svelte` patterns project to `.d.svelte.ts` and catch the
+    // ambient sidecars whose re-exports pull the `.svn.ts`/`.svn.js`
+    // overlays into the program transitively. That chain replaces
+    // listing `.svn.ts` in `compilerOptions.files` directly (step 4).
+    //
+    // Non-`.svelte` patterns project as-is (e.g. `src/**/*.ts` →
+    // `<cache>/svelte/src/**/*.ts`). For us those projections are
+    // structural-parity no-ops: Kit overlays land directly in
+    // `compilerOptions.files` instead. Emitting them anyway keeps
+    // the include shape isomorphic to upstream's.
+    let mut projected: Vec<String> = Vec::new();
+    for pat in &user_includes {
+        if let Some(p) = project_to_virtual_svelte_dts(layout, pat) {
+            if !user_includes.contains(&p) && !projected.contains(&p) {
+                projected.push(p);
+            }
+        }
     }
-    // Ambient-sidecar include glob — `<cache>/svelte/**/*.d.svelte.ts`.
-    // Each `<File>.d.svelte.ts` re-exports from
-    // `./<File>.svelte.svn.ts`, so once tsgo's program-construction
-    // sees a `.d.svelte.ts` it follows the re-export and pulls the
-    // `.svn.ts` overlay into the program transitively. This is the
-    // chain that lets us drop `.svn.ts` from `compilerOptions.files`
-    // (step 4) while still type-checking every overlay. Mirrors
-    // upstream's `virtualInclude` (`incremental.ts:427`) which
-    // projects each user `.svelte` pattern into a parallel
-    // `<svelte/>**/*.d.svelte.ts` form. Today (pre step 4) the
-    // sidecar reaches the program either way — via this glob OR via
-    // resolution from a user `.ts` module that imports a `.svelte` —
-    // but adding the glob makes the chain reachable BEFORE we drop
-    // the direct files-listing.
+    user_includes.extend(projected);
+    // Baseline catch-all for cache overlays. Required because our
+    // cache lives under `node_modules/.cache/svelte-check-native/`,
+    // and TypeScript's default include scan hardcodes `node_modules`
+    // exclusion. Without an explicit `include` glob into the cache,
+    // overlays NEVER reach the program for tsconfigs that omit
+    // `include` entirely (LS-fixture style: just `compilerOptions`
+    // + `exclude`). Upstream svelte-check sidesteps this — their
+    // cache lives at `<workspace>/.svelte-check/`, outside any
+    // default-excluded path, so default scan finds overlays even
+    // with no `include`. Different cache location is the structural
+    // divergence; this glob is its workaround. Documented as the
+    // third intentional divergence in `notes/PARITY_REFACTOR.md`.
     let cache_dts_glob = format!(
         "{}/**/*.d.svelte.ts",
         layout.svelte_dir.to_string_lossy()
@@ -561,6 +570,44 @@ fn mirror_into_overlay(layout: &CacheLayout, path_str: &str) -> Option<String> {
     let normalized = normalize(&abs);
     let rel = normalized.strip_prefix(&layout.workspace).ok()?;
     let mirrored = layout.svelte_dir.join(rel);
+    Some(mirrored.to_string_lossy().into_owned())
+}
+
+/// Project a workspace-anchored include pattern into the overlay's
+/// `svelte/` cache tree, replacing a trailing `.svelte` glob suffix
+/// with `.d.svelte.ts`. Mirrors upstream's `toVirtualSvelteDtsSpec`
+/// (`incremental.ts:963-966`):
+///
+/// - `<workspace>/src/**/*.svelte` → `<cache>/svelte/src/**/*.d.svelte.ts`
+/// - `<workspace>/src/**/*.ts`     → `<cache>/svelte/src/**/*.ts`
+/// - `<other>/...` (not under workspace) → None (we don't mirror
+///   external trees into the overlay's `svelte/` dir)
+/// - any path already inside the cache → None (already projected,
+///   would re-cache itself recursively)
+///
+/// The `.ts` projection is the analogue of upstream's mechanism for
+/// catching Kit overlays under `<cache>/svelte/src/routes/+layout.ts`
+/// via the user's `src/**/*.ts` include. We list Kit overlays
+/// directly in `compilerOptions.files`, so this projection is a
+/// structural-parity no-op for us — but emitting it keeps the
+/// overlay's include shape isomorphic to upstream's.
+fn project_to_virtual_svelte_dts(layout: &CacheLayout, abs_pattern: &str) -> Option<String> {
+    let p = Path::new(abs_pattern);
+    if !p.is_absolute() {
+        return None;
+    }
+    let normalized = normalize(p);
+    if normalized.starts_with(&layout.root) {
+        return None;
+    }
+    let rel = normalized.strip_prefix(&layout.workspace).ok()?;
+    let rel_str = rel.to_string_lossy();
+    let projected_rel = if let Some(stripped) = rel_str.strip_suffix(".svelte") {
+        format!("{stripped}.d.svelte.ts")
+    } else {
+        rel_str.into_owned()
+    };
+    let mirrored = layout.svelte_dir.join(projected_rel);
     Some(mirrored.to_string_lossy().into_owned())
 }
 
