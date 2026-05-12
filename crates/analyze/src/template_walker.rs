@@ -22,15 +22,13 @@
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 use svn_core::Range;
-use svn_parser::{
-    AttrValuePart, Attribute, Directive, DirectiveKind, DirectiveValue, Fragment,
-};
+use svn_parser::{AttrValuePart, Fragment};
 
-use crate::nodes::attribute::literal_attr_value;
+use crate::nodes::attribute::{WalkCtx, literal_attr_value, walk_attributes};
 use crate::nodes::binding::{collect_bind_this_checks, collect_bind_value_bindings};
 use crate::nodes::destructure::{
     apply_default_narrow, default_typeof_expr, is_destructure, is_simple_identifier,
-    items_typeof_expr, project_destructure_path, simple_identifier_in,
+    items_typeof_expr, project_destructure_path,
 };
 use crate::nodes::event_handler::collect_bubbled_dom_events;
 use crate::nodes::inline_component::{collect_component_instantiation, collect_instantiation_inner};
@@ -630,9 +628,9 @@ pub fn walk_template(fragment: &Fragment, source: &str) -> TemplateSummary {
 }
 
 #[derive(Default)]
-struct Counters {
-    action_attrs: usize,
-    bind_pair: usize,
+pub(crate) struct Counters {
+    pub(crate) action_attrs: usize,
+    pub(crate) bind_pair: usize,
     /// Names seen from `{@const NAME = …}` interpolations during this
     /// walk. Used to dedup before pushing into
     /// `summary.at_const_names`; the same name declared twice in the
@@ -1247,125 +1245,6 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
             // drops references rather than splicing module-scope.
             self.shadow.entries.push((name.clone(), None));
         }
-    }
-}
-
-/// Heuristic: a destructure `{@const}` produces multiple bound
-/// names. Bare-identifier form produces exactly one. We use this to
-/// gate `at_const_names` summary recording so destructure forms
-/// don't leak partial names into the emit's `let NAME: any;` list
-/// — emit can't currently synthesise multi-binding declarations
-/// from the summary alone.
-struct WalkCtx<'src> {
-    source: &'src str,
-}
-
-fn walk_attributes(
-    attrs: &[Attribute],
-    summary: &mut TemplateSummary,
-    counters: &mut Counters,
-    ctx: &WalkCtx<'_>,
-    parent_tag: Option<&str>,
-) {
-    for attr in attrs {
-        if let Attribute::Directive(d) = attr {
-            walk_directive(d, summary, counters, ctx, parent_tag);
-        }
-    }
-}
-
-fn walk_directive(
-    d: &Directive,
-    summary: &mut TemplateSummary,
-    counters: &mut Counters,
-    ctx: &WalkCtx<'_>,
-    parent_tag: Option<&str>,
-) {
-    match d.kind {
-        DirectiveKind::Use => {
-            let index = counters.action_attrs;
-            let name = format!("__svn_action_attrs_{index}");
-            summary.void_refs.register(name);
-            counters.action_attrs += 1;
-            // Capture the full action-directive shape so emit can build
-            // the real call — `action(element, params)` — rather than
-            // the pre-v0.3.9 placeholder that dropped both sides and
-            // lost contextual typing on the params expression.
-            let params_range = match &d.value {
-                Some(DirectiveValue::Expression {
-                    expression_range, ..
-                }) => Some(*expression_range),
-                _ => None,
-            };
-            summary.action_directives.push(ActionDirective {
-                index,
-                action_name: d.name.clone(),
-                tag_name: parent_tag.map(SmolStr::new),
-                params_range,
-            });
-        }
-        DirectiveKind::Bind => match &d.value {
-            Some(DirectiveValue::BindPair { .. }) => {
-                let name = format!("__svn_bind_pair_{}", counters.bind_pair);
-                summary.void_refs.register(name);
-                counters.bind_pair += 1;
-            }
-            Some(DirectiveValue::Expression {
-                expression_range, ..
-            }) => {
-                // `bind:this={x}` and `bind:foo={x}` (any prop name) — if
-                // the bound value is a simple identifier, that local
-                // gets assigned asynchronously by Svelte (bind:this when
-                // the element mounts; bind:foo when the child component
-                // updates the bound prop). Record it for the definite-
-                // assignment rewrite so closures reading the variable
-                // don't fire TS2454.
-                if let Some(name) = simple_identifier_in(ctx.source, *expression_range) {
-                    summary.bind_this_targets.push(BindThisTarget {
-                        name,
-                        range: *expression_range,
-                    });
-                }
-                // If the binding name is in our DOM-binding type
-                // table (contentRect, contentBoxSize, buffered, …),
-                // record the value range + its target type so the
-                // emit can generate `<x> = __svn_any() as <TYPE>;`
-                // in the template-check body. Catches shapes like
-                // `<div bind:contentRect={rect}>` where `rect`'s
-                // declared type doesn't accept DOMRectReadOnly.
-                //
-                // This runs IN ADDITION to the bind-target record
-                // above — the same variable needs BOTH the
-                // definite-assignment `!` rewrite (assignment is
-                // hidden inside a lifecycle callback, flow analysis
-                // can't see it) AND the type-compatibility check.
-                if let Some(type_annotation) = crate::dom_binding::type_for(d.name.as_str()) {
-                    summary.dom_bindings.push(DomBinding {
-                        expression: DomBindingExpression::Range(*expression_range),
-                        type_annotation,
-                    });
-                }
-            }
-            None => {
-                // Bare `bind:foo` is shorthand for `bind:foo={foo}` —
-                // same definite-assignment story as the explicit form.
-                summary.bind_this_targets.push(BindThisTarget {
-                    name: d.name.clone(),
-                    range: d.range,
-                });
-                // Also thread through the DOM-binding type check for
-                // bare shorthands like `<video bind:buffered>` which
-                // desugar to `bind:buffered={buffered}`.
-                if let Some(type_annotation) = crate::dom_binding::type_for(d.name.as_str()) {
-                    summary.dom_bindings.push(DomBinding {
-                        expression: DomBindingExpression::Identifier(d.name.clone()),
-                        type_annotation,
-                    });
-                }
-            }
-            _ => {}
-        },
-        _ => {}
     }
 }
 

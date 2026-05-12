@@ -1,11 +1,12 @@
 //! `bind:` directive analyze pass — mirrors upstream
 //! `htmlxtojsx_v2/nodes/Binding.ts`.
 
-use svn_parser::Attribute;
+use svn_parser::{Attribute, Directive, DirectiveValue};
 
 use crate::nodes::attribute::literal_attr_value;
+use crate::nodes::destructure::simple_identifier_in;
 use crate::template_walker::{
-    BindThisCheck, DomBinding, DomBindingExpression, TemplateSummary,
+    BindThisCheck, BindThisTarget, Counters, DomBinding, DomBindingExpression, TemplateSummary,
 };
 
 /// v0.3 Item 8 extended: record `bind:value={EXPR}` sites with a
@@ -101,5 +102,86 @@ pub(crate) fn collect_bind_this_checks(attrs: &[Attribute], summary: &mut Templa
         summary.bind_this_checks.push(BindThisCheck {
             expression_range: *expression_range,
         });
+    }
+}
+
+/// Handle the `bind:` arm of `walk_directive`. Three sub-cases:
+///
+/// - `BindPair` (Svelte 5 `bind:foo={getter, setter}`) → register
+///   a `__svn_bind_pair_N` void-ref.
+/// - `Expression` (`bind:foo={x}` / `bind:this={x}`) → record `x`
+///   as a definite-assignment target if it's a simple identifier,
+///   AND record a DOM-binding type-check entry if `foo` is in our
+///   one-way DOM-binding table (contentRect, contentBoxSize, etc.).
+/// - `None` (bare `bind:foo`) → desugars to `bind:foo={foo}`; same
+///   definite-assignment + DOM-binding treatment as the explicit
+///   form, with the identifier source taken from the directive's
+///   own range.
+pub(crate) fn handle_bind_directive(
+    d: &Directive,
+    summary: &mut TemplateSummary,
+    counters: &mut Counters,
+    source: &str,
+) {
+    match &d.value {
+        Some(DirectiveValue::BindPair { .. }) => {
+            let name = format!("__svn_bind_pair_{}", counters.bind_pair);
+            summary.void_refs.register(name);
+            counters.bind_pair += 1;
+        }
+        Some(DirectiveValue::Expression {
+            expression_range, ..
+        }) => {
+            // `bind:this={x}` and `bind:foo={x}` (any prop name) — if
+            // the bound value is a simple identifier, that local
+            // gets assigned asynchronously by Svelte (bind:this when
+            // the element mounts; bind:foo when the child component
+            // updates the bound prop). Record it for the definite-
+            // assignment rewrite so closures reading the variable
+            // don't fire TS2454.
+            if let Some(name) = simple_identifier_in(source, *expression_range) {
+                summary.bind_this_targets.push(BindThisTarget {
+                    name,
+                    range: *expression_range,
+                });
+            }
+            // If the binding name is in our DOM-binding type
+            // table (contentRect, contentBoxSize, buffered, …),
+            // record the value range + its target type so the
+            // emit can generate `<x> = __svn_any() as <TYPE>;`
+            // in the template-check body. Catches shapes like
+            // `<div bind:contentRect={rect}>` where `rect`'s
+            // declared type doesn't accept DOMRectReadOnly.
+            //
+            // This runs IN ADDITION to the bind-target record
+            // above — the same variable needs BOTH the
+            // definite-assignment `!` rewrite (assignment is
+            // hidden inside a lifecycle callback, flow analysis
+            // can't see it) AND the type-compatibility check.
+            if let Some(type_annotation) = crate::dom_binding::type_for(d.name.as_str()) {
+                summary.dom_bindings.push(DomBinding {
+                    expression: DomBindingExpression::Range(*expression_range),
+                    type_annotation,
+                });
+            }
+        }
+        None => {
+            // Bare `bind:foo` is shorthand for `bind:foo={foo}` —
+            // same definite-assignment story as the explicit form.
+            summary.bind_this_targets.push(BindThisTarget {
+                name: d.name.clone(),
+                range: d.range,
+            });
+            // Also thread through the DOM-binding type check for
+            // bare shorthands like `<video bind:buffered>` which
+            // desugar to `bind:buffered={buffered}`.
+            if let Some(type_annotation) = crate::dom_binding::type_for(d.name.as_str()) {
+                summary.dom_bindings.push(DomBinding {
+                    expression: DomBindingExpression::Identifier(d.name.clone()),
+                    type_annotation,
+                });
+            }
+        }
+        _ => {}
     }
 }
