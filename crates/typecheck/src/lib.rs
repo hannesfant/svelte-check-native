@@ -538,6 +538,17 @@ pub fn check(
     let mut diagnostics: Vec<CheckDiagnostic> = run
         .diagnostics
         .into_iter()
+        .map(|mut d| {
+            // Bare-form diagnostics (config-level, no position) come out
+            // of the parser with an empty `file`. Substitute the user's
+            // tsconfig path so downstream attribution treats them as
+            // belonging to that config — mirrors upstream svelte-check's
+            // `mapCliDiagnosticsToLsp(.., opts.tsconfig)` fallback.
+            if d.file.as_os_str().is_empty() {
+                d.file = user_tsconfig.to_path_buf();
+            }
+            d
+        })
         .filter(|d| !filters::is_overlay_tsconfig_noise(d, &layout))
         .filter_map(|d| map_diagnostic(d, &layout, &map_data))
         .filter(|d| !filters::is_svelte4_reactive_noop_comma(d))

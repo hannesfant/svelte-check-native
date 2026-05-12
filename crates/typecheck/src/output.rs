@@ -20,6 +20,10 @@ use std::path::PathBuf;
 pub struct RawDiagnostic {
     /// Filename as printed by tsgo. May be a generated `.svelte.ts` path
     /// inside the cache; the orchestrator maps it back to the source.
+    /// Empty (`PathBuf::new()`) for bare-form diagnostics that tsgo
+    /// emits without a position prefix (config-level errors like
+    /// TS18003). Callers substitute an attribution path before
+    /// downstream mapping — see `parse_header` for details.
     pub file: PathBuf,
     /// 1-based line number as printed.
     pub line: u32,
@@ -77,17 +81,40 @@ pub fn parse(stdout: &str) -> Vec<RawDiagnostic> {
 
 /// Parse a single header line. Returns `None` if the line doesn't match.
 ///
-/// Format: `<file>:<line>:<col> - <severity> TS<code>: <message>`
+/// Two shapes are accepted:
+///
+/// 1. File-anchored: `<file>:<line>:<col> - <severity> TS<code>: <message>`.
+///    The common case — any diagnostic that ties to a source position.
+/// 2. Bare/global: `<severity> TS<code>: <message>`. tsgo emits this for
+///    config-level errors that can't be tied to a single position (e.g.
+///    TS18003 "No inputs were found in config file '...'"). The returned
+///    `file` is empty (`PathBuf::new()`); `line` and `column` are 0.
+///    Callers attribute these to a tsconfig path of their choosing —
+///    `crate::check` substitutes the user's tsconfig before downstream
+///    mapping, mirroring upstream svelte-check's
+///    `mapCliDiagnosticsToLsp(.., tsconfigPath)` fallback at
+///    `packages/svelte-check/src/incremental.ts:565`.
 fn parse_header(line: &str) -> Option<RawDiagnostic> {
     // Find ` - error TS` or ` - warning TS` somewhere in the line.
-    let (sep_idx, severity) = if let Some(idx) = line.find(" - error TS") {
-        (idx, Severity::Error)
-    } else if let Some(idx) = line.find(" - warning TS") {
-        (idx, Severity::Warning)
-    } else {
-        return None;
-    };
+    if let Some(idx) = line.find(" - error TS") {
+        return parse_anchored_header(line, idx, Severity::Error);
+    }
+    if let Some(idx) = line.find(" - warning TS") {
+        return parse_anchored_header(line, idx, Severity::Warning);
+    }
+    // No location prefix — try the bare form. Must START with
+    // `error TS` / `warning TS` so we don't match diagnostic message
+    // bodies that happen to mention the substring later.
+    if let Some(rest) = line.strip_prefix("error TS") {
+        return parse_bare_header(rest, Severity::Error);
+    }
+    if let Some(rest) = line.strip_prefix("warning TS") {
+        return parse_bare_header(rest, Severity::Warning);
+    }
+    None
+}
 
+fn parse_anchored_header(line: &str, sep_idx: usize, severity: Severity) -> Option<RawDiagnostic> {
     // Left of separator: `<file>:<line>:<col>`.
     let location = &line[..sep_idx];
     let (file_str, line_no, col_no) = split_location(location)?;
@@ -111,6 +138,24 @@ fn parse_header(line: &str) -> Option<RawDiagnostic> {
         file: PathBuf::from(file_str),
         line: line_no,
         column: col_no,
+        severity,
+        code,
+        message,
+        span_length: None,
+    })
+}
+
+/// Parse the bare-form tail after the `error TS` / `warning TS` prefix
+/// has already been stripped. Returned diagnostic has empty `file` and
+/// zero line/column.
+fn parse_bare_header(rest: &str, severity: Severity) -> Option<RawDiagnostic> {
+    let colon_idx = rest.find(": ")?;
+    let code: u32 = rest[..colon_idx].parse().ok()?;
+    let message = rest[colon_idx + 2..].trim().to_string();
+    Some(RawDiagnostic {
+        file: PathBuf::new(),
+        line: 0,
+        column: 0,
         severity,
         code,
         message,
@@ -281,5 +326,49 @@ also ignored
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].file, PathBuf::from("src/日本語/Café.ts"));
         assert_eq!(diags[0].message, "naïve résumé τ");
+    }
+
+    #[test]
+    fn parses_bare_form_global_error() {
+        // tsgo prints config-level errors without a `<file>:<line>:<col> - `
+        // prefix. Verified against `tsgo --project <bad-config>`:
+        //   error TS18003: No inputs were found in config file '...'.
+        let stdout = "\
+error TS18003: No inputs were found in config file '/x/tsconfig.json'. Specified 'include' paths were '[\"./does-not-exist.ts\"]' and 'exclude' paths were '[]'.
+";
+        let diags = parse(stdout);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.file, PathBuf::new(), "bare-form file is empty sentinel");
+        assert_eq!(d.line, 0);
+        assert_eq!(d.column, 0);
+        assert_eq!(d.severity, Severity::Error);
+        assert_eq!(d.code, 18003);
+        assert!(d.message.contains("No inputs were found"));
+    }
+
+    #[test]
+    fn parses_bare_form_global_warning() {
+        let stdout = "warning TS9999: hypothetical bare warning";
+        let diags = parse(stdout);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert_eq!(diags[0].code, 9999);
+        assert_eq!(diags[0].file, PathBuf::new());
+    }
+
+    #[test]
+    fn bare_form_does_not_match_diagnostic_message_bodies() {
+        // The substring `error TS` can appear inside diagnostic *messages*
+        // (e.g. a TS6082 banner). The bare parser must require the line
+        // to START with the prefix so we don't double-count message body
+        // text as new diagnostics.
+        let stdout = "\
+src/foo.ts:1:1 - error TS6082: error TS2322 mentioned in this message body
+";
+        let diags = parse(stdout);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, 6082);
+        assert_eq!(diags[0].file, PathBuf::from("src/foo.ts"));
     }
 }
