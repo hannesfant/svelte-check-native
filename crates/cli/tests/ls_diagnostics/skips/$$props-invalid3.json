@@ -1,0 +1,4 @@
+{
+  "bucket": "tsgo-divergence",
+  "reason": "tsgo emits inner TS2741 (missing-prop) where tsc/upstream LS emits TS2345 wrap"
+}

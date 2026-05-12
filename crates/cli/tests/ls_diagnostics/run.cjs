@@ -48,91 +48,33 @@ const UPSTREAM_EXCLUDED = new Set([
 
 // Fixtures we deliberately skip with a one-line reason. Treat each as a
 // future parity bug; the count should monotonically decrease as overlay-
-// shape and lint coverage close gaps. Buckets:
+// shape and lint coverage close gaps. One file per skipped fixture lives
+// under `skips/<name>.json` with shape `{bucket, reason}`; see
+// `skips/README.md` for the schema and bucket vocabulary.
 //
-//   bucket=overlay-positions: identical (file, code) MULTISET as upstream
-//     in spirit, but counts diverge because our overlay produces a
-//     different number of TS errors per source position. E.g. a single
-//     bind: site fans out to 2 errors in upstream's overlay vs 1 in ours
-//     (or vice versa) — both flag the same bug, just with different
-//     redundancy. Resolves when overlay shape converges.
-//
-//   bucket=missing-code: TS code our typecheck doesn't surface in this
-//     scenario. Examples: 6385/6387 (deprecation hints, severity≠ERROR),
-//     6133/7044 (unused-decl / implicit-any noisy hints we filter),
-//     18047 (possibly-null narrowing on a path tsgo handles differently),
-//     -1 (svelte-compiler parser error reported by upstream's
-//     svelte plugin, not by tsgo). Resolves when those code paths land.
-//
-//   bucket=alt-language: <script lang="coffee"> / lang="pug" — upstream's
-//     LS skips type-checking these; we feed them to oxc and explode.
-//
-//   bucket=svelte-shim-resolution: TS2307 "cannot find module 'svelte'"
-//     fires in our overlay because the LS fixtures dir doesn't have a
-//     `svelte` package installed; upstream's LS resolves the module via
-//     the in-process svelte-language-server importPackage path. Whole-
-//     workspace mode would need a synthetic install.
-//
-//   bucket=position-drift: same (file, code) MULTISET but column /
-//     line drifts because our overlay's reverse mapping lands the
-//     diagnostic on a different anchor than upstream's. Surfaced
-//     when R-Parity #1 switched the default match from (file, code)
-//     to (file, line, character, code). Resolves when the overlay's
-//     line/col anchor converges with upstream's.
-const SKIP_LIST = {
-    // Upstream-excluded — see UPSTREAM_EXCLUDED above; recorded here too
-    // so the printed scoreboard surfaces them.
-    'node16': 'upstream-root tsconfig excludes — node16 module-resolution mode',
-    'project-reference': 'upstream-root tsconfig excludes — project-references mode',
-
-    // bucket=alt-language
-    // (was 'pug' here — closed by R-Conv #20 B2 #1, isNoPugFalsePositive port)
-
-    // bucket=missing-code
-    '$$events': 'missing-code: 6385/6387 deprecation hints not surfaced',
-    'deprecated-unused-hints': 'missing-code: 6133/6385 unused/deprecated hints filtered',
-    // (was '$bindable-reassign.v5' — closed by R-Conv #22 V5 Phase 5: --include-suggestions surfaces TS6133 hints)
-    'const-tag': 'missing-code: 6133 unused-declaration hint filtered (5×)',
-    'parser-error': 'missing-code: -1 svelte-compiler parser error path differs',
-    'svelte-element-error': 'missing-code: -1 svelte-compiler parser error path differs',
-    // (was 'unInitialized' — closed by R-Conv #20 B2 #5: drop blanket def_assign_names from typed-uninit lets)
-    'bind-this': 'missing-code: 2322/2454/6133 mix not all surfaced',
-    // (was 'undeclared-component' — closed by R-Conv #20: append_with_source on component name)
-    // (was 'ignore-generated-code' — bonus unblock from R-Conv #20 B2 #4 if-condition TokenMap)
-
-    // bucket=svelte-shim-resolution / structural
-    '$$events-usage': 'shim-resolution: 2307 cannot-find-module svelte + 7006 implicit-any cascade',
-    '$$props-usage': 'shim-resolution: 2307 cannot-find-module svelte',
-    '$$slots-usage': 'shim-resolution: 2307 cannot-find-module svelte + 2339/2367 mismatch',
-    'custom-types': '7006 implicit-any leak (×4) plus 2353/7044 missing — overlay differs',
-
-    // bucket=overlay-positions: same code categories, different counts
-    '$$props-invalid3': 'tsgo-divergence: tsgo emits inner TS2741 (missing-prop) where tsc/upstream LS emits TS2345 wrap',
-    // (was '$$slots' here — closed by R-Conv #20 B2 #3, __svn_create_slot synthesis)
-    '$store-wrong-usage': 'overlay-counts: 2769 fires 6× upstream, 0× ours',
-    'accessors-customElement-configs': 'overlay-counts: 2322 extra in our overlay',
-    'actions-animations-transitions-typechecks': 'tsgo-divergence: 1/2 fires (transition:draw), action call fires 2740 (tsgo) where expected 2345 (tsc)',
-    'component-invalid': 'overlay-counts: 2322/2345 missing, 2353/2554 extra',
-    // svelte-native expects the svelteNative.JSX namespace switch (jsxFactory:
-    // "svelteNative" + svelteOptions.namespace = "svelteNative.JSX") so element
-    // attribute checks degrade to the catch-all `[name: string]: { [name: string]: any }`
-    // shape. We always emit `svelteHTML.createElement(...)`; once R-Conv #7
-    // tightened the fallback `HTMLAttributes` interface, the per-element strict
-    // shape now fires 2353 on `<label horizontalAlignment=…>` etc. which the
-    // svelte-native fixture intends to permit.
-    'svelte-native': 'namespace-handling: requires svelteOptions.namespace=svelteNative.JSX',
-    // (was 'generics' — closed by R-Conv #20 B2 #6, $$Generic class-wrapper synth)
-    'getters': 'overlay-counts: 2367 vs 2749 mismatch',
-    // (was 'snippet-js.v5' — closed by R-Conv #20 B2 #4: typed JS snippet hoist + if-condition TokenMap)
-    'strictEvents': 'overlay-counts: 2345 missing',
-    // (was 'svelte-element' — closed by R-Conv #20: svelte:element bind:this narrows via createElement)
-
-    // bucket=position-drift was here. All three entries
-    // (`$store-bind`, `script-boolean-not-assignable-to-string`,
-    // `modulescript-boolean-not-assignable-to-string`) unblocked
-    // by R-Conv #1 (component-bind name anchor) and R-Conv #2
-    // (single-line script body TokenMapEntry).
-};
+// `node16` and `project-reference` aren't here — they sit in
+// `UPSTREAM_EXCLUDED` above (the upstream root tsconfig excludes them).
+const SKIPS_DIR = path.join(__dirname, 'skips');
+function loadSkipList() {
+    const map = Object.create(null);
+    if (!existsSync(SKIPS_DIR)) return map;
+    for (const fname of readdirSync(SKIPS_DIR)) {
+        if (!fname.endsWith('.json')) continue;
+        const fixture = fname.slice(0, -'.json'.length);
+        let data;
+        try {
+            data = JSON.parse(readFileSync(path.join(SKIPS_DIR, fname), 'utf-8'));
+        } catch (err) {
+            throw new Error(`skips/${fname}: parse error \u2014 ${err.message}`);
+        }
+        if (typeof data.bucket !== 'string' || typeof data.reason !== 'string') {
+            throw new Error(`skips/${fname}: missing required "bucket" or "reason"`);
+        }
+        map[fixture] = `${data.bucket}: ${data.reason}`;
+    }
+    return map;
+}
+const SKIP_LIST = loadSkipList();
 
 let passed = 0;
 let failed = 0;

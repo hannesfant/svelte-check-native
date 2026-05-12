@@ -1,0 +1,4 @@
+{
+  "bucket": "namespace-handling",
+  "reason": "requires svelteOptions.namespace=svelteNative.JSX"
+}

@@ -1,0 +1,4 @@
+{
+  "bucket": "tsgo-divergence",
+  "reason": "1/2 fires (transition:draw), action call fires 2740 (tsgo) where expected 2345 (tsc)"
+}

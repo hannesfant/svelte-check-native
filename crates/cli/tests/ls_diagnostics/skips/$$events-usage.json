@@ -1,0 +1,4 @@
+{
+  "bucket": "shim-resolution",
+  "reason": "2307 cannot-find-module svelte + 7006 implicit-any cascade"
+}

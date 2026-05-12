@@ -1,0 +1,4 @@
+{
+  "bucket": "shim-resolution",
+  "reason": "7006 implicit-any leak (\u00d74) plus 2353/7044 missing \u2014 overlay differs"
+}
