@@ -405,10 +405,7 @@ fn emit_snippet_prop_destructure(
     if names.is_empty() {
         return;
     }
-    let _ = write!(
-        buf,
-        "{inner}/*svn:ignore_start*/const {{ "
-    );
+    let _ = write!(buf, "{inner}/*svn:ignore_start*/const {{ ");
     for (i, n) in names.iter().enumerate() {
         if i > 0 {
             buf.push_str(", ");
@@ -423,7 +420,10 @@ fn emit_snippet_prop_destructure(
     // marks each destructured name as used, so 6133 never fires
     // regardless of where the diagnostic anchor lands.
     for n in &names {
-        let _ = writeln!(buf, "{inner}/*svn:ignore_start*/void {n};/*svn:ignore_end*/");
+        let _ = writeln!(
+            buf,
+            "{inner}/*svn:ignore_start*/void {n};/*svn:ignore_end*/"
+        );
     }
 }
 

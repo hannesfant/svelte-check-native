@@ -141,11 +141,9 @@ pub(crate) fn visit(v: &mut AnalyzeVisitor<'_>, s: &SvelteElement) {
             BubbledDomEventScope::SvelteWindow,
             &mut v.summary,
         ),
-        SvelteElementKind::Element => collect_bubbled_dom_events(
-            &s.attributes,
-            BubbledDomEventScope::Element,
-            &mut v.summary,
-        ),
+        SvelteElementKind::Element => {
+            collect_bubbled_dom_events(&s.attributes, BubbledDomEventScope::Element, &mut v.summary)
+        }
         _ => {}
     }
 }

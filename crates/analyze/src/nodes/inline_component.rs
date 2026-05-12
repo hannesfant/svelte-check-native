@@ -120,9 +120,9 @@ pub(crate) fn collect_instantiation_inner(
     // upstream silently routes the body through the slot scope.
     // Example: `<Comp let:b>...</Comp>` against a Comp with no
     // declared `children: Snippet`.
-    let has_let_directive = attributes.iter().any(|a| {
-        matches!(a, Attribute::Directive(d) if d.kind == svn_parser::DirectiveKind::Let)
-    });
+    let has_let_directive = attributes
+        .iter()
+        .any(|a| matches!(a, Attribute::Directive(d) if d.kind == svn_parser::DirectiveKind::Let));
     let has_implicit_children = !has_let_directive
         && children.nodes.iter().any(|n| match n {
             Node::SnippetBlock(_) => false,

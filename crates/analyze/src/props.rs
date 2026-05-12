@@ -333,12 +333,20 @@ fn synthesize_props_type_from_export_let(
             if let Some(Declaration::FunctionDeclaration(f)) = &export_decl.declaration
                 && let Some(id) = &f.id
             {
-                parts.push(format!("{}?: typeof {};", id.name.as_str(), id.name.as_str()));
+                parts.push(format!(
+                    "{}?: typeof {};",
+                    id.name.as_str(),
+                    id.name.as_str()
+                ));
             }
             if let Some(Declaration::ClassDeclaration(c)) = &export_decl.declaration
                 && let Some(id) = &c.id
             {
-                parts.push(format!("{}?: typeof {};", id.name.as_str(), id.name.as_str()));
+                parts.push(format!(
+                    "{}?: typeof {};",
+                    id.name.as_str(),
+                    id.name.as_str()
+                ));
             }
         }
         // `export { name as alias, ... }` specifier form. Svelte 4

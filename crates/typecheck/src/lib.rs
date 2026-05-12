@@ -595,9 +595,7 @@ pub fn check(
     if include_suggestions {
         let suppressed_lines: std::collections::HashSet<(PathBuf, u32)> = diagnostics
             .iter()
-            .filter(|d| {
-                matches!(d.code, DiagnosticCode::Numeric(2305..=2307))
-            })
+            .filter(|d| matches!(d.code, DiagnosticCode::Numeric(2305..=2307)))
             .map(|d| (d.source_path.clone(), d.line))
             .collect();
         diagnostics.retain(|d| {

@@ -478,10 +478,7 @@ pub fn build(
     // with no `include`. Different cache location is the structural
     // divergence; this glob is its workaround. Documented as the
     // third intentional divergence in `notes/PARITY_REFACTOR.md`.
-    let cache_dts_glob = format!(
-        "{}/**/*.d.svelte.ts",
-        layout.svelte_dir.to_string_lossy()
-    );
+    let cache_dts_glob = format!("{}/**/*.d.svelte.ts", layout.svelte_dir.to_string_lossy());
     if !user_includes.contains(&cache_dts_glob) {
         user_includes.push(cache_dts_glob);
     }

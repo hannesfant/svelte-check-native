@@ -45,14 +45,16 @@ pub mod slot_attr_rewrite;
 pub mod store;
 pub mod template_refs;
 pub mod template_scope;
-pub mod walker;
 pub mod void_refs;
+pub mod walker;
 
 pub use ast_walk::{WalkNode, collect_function_body_stmts, walk_statement_descend};
 pub use jsdoc::{
     scan_jsdoc_props_typedef_keys, scan_jsdoc_typedef_name, should_synthesise_js_props,
 };
 pub use model::SemanticModel;
+pub use nodes::attribute::literal_attr_value;
+pub use nodes::binding::resolve_bind_value_type;
 pub use props::{
     PropInfo, PropsInfo, PropsSource, collect_inline_typed_dispatcher_member_names,
     contains_typeof_ref, find_dispatched_event_names, find_dispatcher_event_type_sources,
@@ -66,12 +68,10 @@ pub use store::{
     collect_typed_uninit_lets, find_store_refs, find_store_refs_with_bindings,
 };
 pub use template_refs::find_template_refs;
-pub use nodes::attribute::literal_attr_value;
-pub use nodes::binding::resolve_bind_value_type;
+pub use void_refs::VoidRefRegistry;
 pub use walker::{
     BindDirective, BindThisCheck, BindThisTarget, BubbledComponentEvent, BubbledDomEvent,
     BubbledDomEventScope, ComponentInstantiation, DomBinding, DomBindingExpression,
     OnEventDirective, PropShape, ResolvedSlotExpr, SlotAttr, SlotAttrExpr, SlotDef,
     TemplateSummary, walk_template,
 };
-pub use void_refs::VoidRefRegistry;

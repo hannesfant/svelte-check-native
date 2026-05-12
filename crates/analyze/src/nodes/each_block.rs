@@ -78,8 +78,9 @@ pub(crate) fn enter(v: &mut AnalyzeVisitor<'_>, bindings: &[BoundIdent], has_ind
             // template syntax into a TS type position).
             if b.has_default
                 && let Some(pat_range) = b.pattern_source_range
-                && let Some(pat_source) =
-                    v.source.get(pat_range.start as usize..pat_range.end as usize)
+                && let Some(pat_source) = v
+                    .source
+                    .get(pat_range.start as usize..pat_range.end as usize)
             {
                 Some(ResolvedSlotExpr::Value(format!(
                     "(({pat}) => {leaf})(undefined as any as ({element_ty}))",

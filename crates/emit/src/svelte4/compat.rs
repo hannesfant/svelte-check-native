@@ -737,23 +737,16 @@ fn line_continues(bytes: &[u8], s: usize) -> bool {
         let c = bytes[next];
         if !matches!(
             c,
-            b'?' | b':'
-                | b'.'
-                | b'&'
-                | b'|'
-                | b'+'
-                | b'-'
-                | b'*'
-                | b'/'
-                | b'%'
-                | b'^'
-                | b'='
+            b'?' | b':' | b'.' | b'&' | b'|' | b'+' | b'-' | b'*' | b'/' | b'%' | b'^' | b'='
         ) {
             false
         } else {
             let after = bytes.get(next + 1).copied();
             // `//` line comment, `/*` block comment, `*/` block close
-            !matches!((c, after), (b'/', Some(b'/')) | (b'/', Some(b'*')) | (b'*', Some(b'/')))
+            !matches!(
+                (c, after),
+                (b'/', Some(b'/')) | (b'/', Some(b'*')) | (b'*', Some(b'/'))
+            )
         }
     };
 
@@ -874,16 +867,10 @@ fn try_process_let_statement_for_denarrow(
             // BEFORE the comment, not buried inside it. `/*` block
             // comments behave the same way; skip to `*/` so the walk
             // doesn't mis-fire on tokens inside.
-            if paren_depth == 0
-                && c == b'/'
-                && bytes.get(s + 1).copied() == Some(b'/')
-            {
+            if paren_depth == 0 && c == b'/' && bytes.get(s + 1).copied() == Some(b'/') {
                 break;
             }
-            if paren_depth == 0
-                && c == b'/'
-                && bytes.get(s + 1).copied() == Some(b'*')
-            {
+            if paren_depth == 0 && c == b'/' && bytes.get(s + 1).copied() == Some(b'*') {
                 let mut k = s + 2;
                 while k + 1 < bytes.len() && !(bytes[k] == b'*' && bytes[k + 1] == b'/') {
                     k += 1;

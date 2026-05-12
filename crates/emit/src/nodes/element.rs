@@ -826,7 +826,8 @@ fn emit_slot_check(buf: &mut EmitBuffer, source: &str, e: &svn_parser::Element, 
                 let text = source
                     .get(v.range.start as usize..v.range.end as usize)
                     .unwrap_or("");
-                let stripped = text.trim_start_matches(['"', '\''].as_ref())
+                let stripped = text
+                    .trim_start_matches(['"', '\''].as_ref())
                     .trim_end_matches(['"', '\''].as_ref());
                 // Anchor on the inner content (`invalid`), not the
                 // surrounding quote. Upstream's TS2345 for unknown
@@ -850,10 +851,7 @@ fn emit_slot_check(buf: &mut EmitBuffer, source: &str, e: &svn_parser::Element, 
         // reverse-maps onto the user's `<slot>` site.
         let name_start = e.range.start.saturating_add(1);
         let name_end = name_start.saturating_add(4); // "slot"
-        buf.append_with_source(
-            "\"default\"",
-            svn_core::Range::new(name_start, name_end),
-        );
+        buf.append_with_source("\"default\"", svn_core::Range::new(name_start, name_end));
     }
     buf.push_str(", { ");
     // Slot props: every attr that isn't `name=`, emitted as
@@ -900,8 +898,7 @@ fn emit_slot_check(buf: &mut EmitBuffer, source: &str, e: &svn_parser::Element, 
                 let inner_text = source
                     .get(s.range.start as usize + 1..s.range.end as usize)
                     .unwrap_or("");
-                let leading_ws =
-                    (inner_text.len() - inner_text.trim_start().len()) as u32;
+                let leading_ws = (inner_text.len() - inner_text.trim_start().len()) as u32;
                 let name_start = s.range.start + 1 + leading_ws;
                 let name_end = name_start + s.name.len() as u32;
                 let name_range = svn_core::Range::new(name_start, name_end);

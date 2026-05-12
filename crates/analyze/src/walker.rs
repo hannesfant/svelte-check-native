@@ -763,8 +763,6 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
         self.scope_marks.push(mark);
     }
 
-
-
     fn leave_scope(&mut self, _kind: crate::template_scope::ScopeKind) {
         if let Some(mark) = self.scope_marks.pop() {
             self.shadow.truncate(mark);

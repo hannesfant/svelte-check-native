@@ -316,10 +316,7 @@ fn synthesise_generics_from_dollar_generic(script: &str) -> Option<SmolStr> {
     let mut cursor = 0;
     while cursor < bytes.len() {
         // Find next `type` keyword.
-        let Some(rel) = bytes[cursor..]
-            .windows(4)
-            .position(|w| w == b"type")
-        else {
+        let Some(rel) = bytes[cursor..].windows(4).position(|w| w == b"type") else {
             break;
         };
         let kw_start = cursor + rel;

@@ -298,8 +298,10 @@ pub fn scan_pug_template_ranges(source_text: &str) -> Vec<(u32, u32)> {
         // Reject `<templateX...` (identifier continuation) — only
         // accept `<template ` / `<template>` / `<template/`.
         let next = bytes.get(after_open).copied();
-        if !matches!(next, Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') | Some(b'>') | Some(b'/'))
-        {
+        if !matches!(
+            next,
+            Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') | Some(b'>') | Some(b'/')
+        ) {
             cursor = after_open;
             continue;
         }

@@ -166,8 +166,9 @@ pub(crate) fn emit_element_bind_checks_inline(
         // annotation. Mirrors upstream svelte2tsx's
         // `const $$_svelteelement0 = svelteHTML.createElement(tag, {…});
         // target = $$_svelteelement0;` shape (Element.ts).
-        let svelte_element_this_expr =
-            (tag_name.is_empty() && name == "this").then(|| svelte_element_tag_expr(attributes, source)).flatten();
+        let svelte_element_this_expr = (tag_name.is_empty() && name == "this")
+            .then(|| svelte_element_tag_expr(attributes, source))
+            .flatten();
         if emit_is_ts() {
             if let Some((tag_expr, tag_range)) = &svelte_element_this_expr {
                 buf.push_str(" = svelteHTML.createElement(");
@@ -216,7 +217,10 @@ fn svelte_element_tag_expr<'a>(
         let leading_ws = (slice.len() - slice.trim_start().len()) as u32;
         let start = e.expression_range.start + leading_ws;
         let end = start + trimmed.len() as u32;
-        return Some((std::borrow::Cow::Borrowed(trimmed), svn_core::Range::new(start, end)));
+        return Some((
+            std::borrow::Cow::Borrowed(trimmed),
+            svn_core::Range::new(start, end),
+        ));
     }
     None
 }
