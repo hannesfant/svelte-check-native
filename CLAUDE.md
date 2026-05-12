@@ -137,6 +137,25 @@ mechanical — delete the submodule and grep for the marker.
 6. **Synthesized-name prefix:** `__svn_*`. Used for every name the emit
    crate creates so they're trivially distinguishable from user code in
    diagnostics.
+
+   **When a helper mirrors a specific upstream `__sveltets_2_*` (same
+   TS-level contract), declare BOTH names in our shim, aliased to the
+   same type.** Our emit-side keeps using `__svn_*` everywhere; the
+   upstream-named declaration exists only so that overlay-diff tools
+   (`scripts/diff-emit.mjs`) can resolve the symbol on either side
+   without manual name translation. This was a miss in the original
+   rename (see `notes/TEMPLATE_WALKER_SPLIT.md` rationale and the
+   2026-05-12 audit) — the rename happened in the same change as the
+   VoidRefRegistry introduction, so the diffability cost wasn't
+   surfaced separately. Don't repeat it for new helpers.
+
+   When this applies: any new helper that maps 1:1 to an upstream
+   `__sveltets_2_X` (or `$$_X`) function — e.g. a future
+   `__sveltets_2_ensureSomething` lands upstream, our shim declares
+   both `__sveltets_2_ensureSomething` and `__svn_ensure_something` as
+   aliases of the same type. When this does NOT apply: helpers we
+   invented that have no upstream equivalent (`__svn_ensure_action`,
+   `__svn_each_items`, etc.) — single declaration, our prefix only.
 7. **Component instantiations emit as `new $$_CN({target, props})`
    through the `__svn_ensure_component` wrapper.** Each `<Comp ...>`
    emits as:

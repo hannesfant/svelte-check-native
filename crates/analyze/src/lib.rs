@@ -38,6 +38,7 @@ pub mod ast_walk;
 pub mod dom_binding;
 pub mod jsdoc;
 pub mod model;
+pub mod nodes;
 pub mod props;
 pub mod rune;
 pub mod slot_attr_rewrite;
