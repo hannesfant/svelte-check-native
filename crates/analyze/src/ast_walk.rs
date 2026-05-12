@@ -4,7 +4,7 @@
 //! recursion duplicates a generated visitor we don't have. The first piece
 //! to pull out of the duplication is `collect_function_body_stmts`, which
 //! had byte-identical copies in `analyze::props` and
-//! `emit::dispatcher_typing_rewrite` — every R14/R15 review round had to
+//! `emit::svelte2tsx_nodes::component_events` — every R14/R15 review round had to
 //! land its descent fix in two places. Keeping the recursion in one
 //! module means a new oxc enum variant only adds one match arm, not seven.
 

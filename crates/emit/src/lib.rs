@@ -48,7 +48,6 @@
 
 mod default_export;
 mod destructure_idents;
-mod dispatcher_typing_rewrite;
 mod emit_buffer;
 mod hoisted_imports;
 mod htmlxtojsx_utils;
@@ -912,7 +911,7 @@ fn emit_document_with_render_name(
         // type-check against $$Events. Mirrors upstream
         // `ComponentEvents.ts:130`.
         let after_state = if has_strict_events_decl {
-            dispatcher_typing_rewrite::rewrite(&after_state, s.lang)
+            svelte2tsx_nodes::component_events::rewrite_dispatcher_typing(&after_state, s.lang)
         } else {
             after_state
         };
