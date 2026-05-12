@@ -55,7 +55,25 @@ child_process.execFileSync = function patchedExecFileSync(file, args, opts) {
         args.length > 0 &&
         isUpstreamSvelteCheckCli(args[0])
     ) {
-        return realExecFileSync.call(this, OUR_BIN, args.slice(1), blankAgentEnv(opts));
+        try {
+            return realExecFileSync.call(this, OUR_BIN, args.slice(1), blankAgentEnv(opts));
+        } catch (err) {
+            // svelte-check exits 1 when diagnostics exist — `err.stdout` is
+            // populated and upstream's own catch parses it. Re-throw so that
+            // path runs unchanged. A genuine crash (signal/timeout/missing
+            // binary) leaves stdout empty; upstream would silently count it
+            // as zero diagnostics and `passed++` against a clean expected
+            // list. Fail the whole run loudly instead.
+            const e = /** @type {any} */ (err);
+            if (e && e.stdout && e.stdout.length > 0) {
+                throw err;
+            }
+            console.error(
+                `shim: native binary crashed with no stdout ` +
+                    `(signal=${e?.signal}, status=${e?.status}, msg=${e?.message})`
+            );
+            process.exit(2);
+        }
     }
     return realExecFileSync.call(this, file, args, opts);
 };
