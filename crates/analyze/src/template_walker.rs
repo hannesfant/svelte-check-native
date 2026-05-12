@@ -24,15 +24,9 @@ use smol_str::SmolStr;
 use svn_core::Range;
 use svn_parser::{AttrValuePart, Fragment};
 
-use crate::nodes::attribute::{WalkCtx, literal_attr_value, walk_attributes};
-use crate::nodes::binding::{collect_bind_this_checks, collect_bind_value_bindings};
 use crate::nodes::destructure::{
-    apply_default_narrow, default_typeof_expr, is_destructure, is_simple_identifier,
-    items_typeof_expr, project_destructure_path,
+    apply_default_narrow, default_typeof_expr, items_typeof_expr, project_destructure_path,
 };
-use crate::nodes::event_handler::collect_bubbled_dom_events;
-use crate::nodes::inline_component::{collect_component_instantiation, collect_instantiation_inner};
-use crate::nodes::let_directive::collect_slot_def;
 use crate::void_refs::VoidRefRegistry;
 
 /// Per-template summary populated during the walk.
@@ -635,7 +629,7 @@ pub(crate) struct Counters {
     /// walk. Used to dedup before pushing into
     /// `summary.at_const_names`; the same name declared twice in the
     /// template (legal Svelte) emits a single `let NAME: any;`.
-    at_const_seen: std::collections::HashSet<SmolStr>,
+    pub(crate) at_const_seen: std::collections::HashSet<SmolStr>,
 }
 
 /// Per-walk resolver stack — replaces the older shadow-stack-of-
@@ -661,7 +655,7 @@ pub(crate) struct Counters {
 /// PLAN: design/slot_handler/PLAN.md §3.2.
 #[derive(Default)]
 pub(crate) struct ResolverStack {
-    entries: Vec<(SmolStr, Option<ResolvedSlotExpr>)>,
+    pub(crate) entries: Vec<(SmolStr, Option<ResolvedSlotExpr>)>,
 }
 
 impl ResolverStack {
@@ -682,27 +676,27 @@ impl ResolverStack {
 /// bind-this targets, component instantiations, slot-def capture)
 /// happens inside the `visit_*` methods; the unified walker drives
 /// recursion and scope bracketing.
-struct AnalyzeVisitor<'src> {
-    summary: TemplateSummary,
-    counters: Counters,
-    source: &'src str,
-    shadow: ResolverStack,
+pub(crate) struct AnalyzeVisitor<'src> {
+    pub(crate) summary: TemplateSummary,
+    pub(crate) counters: Counters,
+    pub(crate) source: &'src str,
+    pub(crate) shadow: ResolverStack,
     /// Stack of entry marks pushed by `enter_scope` / `enter_fragment`.
     /// `leave_scope` / `leave_fragment` pop the matching mark and
     /// truncate the resolver stack back to it.
-    scope_marks: Vec<usize>,
+    pub(crate) scope_marks: Vec<usize>,
     /// Source range of the most recent `{#each EXPR as ...}` outer
     /// expression — stashed by `visit_each_block` and consumed by the
     /// next `enter_scope(Each, …)` call. The walker calls
     /// `visit_each_block` immediately before `enter_scope(Each)` so
     /// they're guaranteed paired (per `template_scope::walk_node_inner`
     /// for `Node::EachBlock`).
-    pending_each_items_range: Option<Range>,
+    pub(crate) pending_each_items_range: Option<Range>,
     /// Same idea, for `{#await EXPR ...}`. Consumed by the next
     /// `enter_scope(AwaitThen, …)` (or AwaitCatch if there's no
     /// then branch). Reset per await-block so each branch picks up
     /// the same promise range.
-    pending_await_promise_range: Option<Range>,
+    pub(crate) pending_await_promise_range: Option<Range>,
     /// SlotHandler PLAN Stage 4: stashed by `visit_component` /
     /// `visit_svelte_element` (Component / SelfRef kinds) and
     /// consumed by the next `enter_scope(LetDirective, …)` call.
@@ -712,18 +706,18 @@ struct AnalyzeVisitor<'src> {
     /// (DOM elements, components with `slot=` consumer wrappers,
     /// dynamic `<svelte:component this={EXPR}>` forms whose root
     /// isn't a typeable identifier).
-    pending_let_owner: Option<LetOwnerInfo>,
+    pub(crate) pending_let_owner: Option<LetOwnerInfo>,
 }
 
 /// Producer-side let-owner info — see
 /// `AnalyzeVisitor.pending_let_owner`.
 #[derive(Debug, Clone)]
-struct LetOwnerInfo {
+pub(crate) struct LetOwnerInfo {
     /// `typeof <root>`-safe component identifier.
-    component_root: SmolStr,
+    pub(crate) component_root: SmolStr,
     /// Slot name the let-bindings target. `"default"` unless a
     /// future stage adds named-slot let-forwarding.
-    slot_name: SmolStr,
+    pub(crate) slot_name: SmolStr,
 }
 
 impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
@@ -738,12 +732,11 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
     }
 
     fn visit_each_block(&mut self, b: &svn_parser::EachBlock) {
-        self.summary.each_block_count += 1;
-        self.pending_each_items_range = Some(b.expression_range);
+        crate::nodes::each_block::visit(self, b);
     }
 
     fn visit_await_block(&mut self, b: &svn_parser::AwaitBlock) {
-        self.pending_await_promise_range = Some(b.expression_range);
+        crate::nodes::await_pending_catch_block::visit(self, b);
     }
 
     fn enter_scope(
@@ -1001,250 +994,19 @@ impl crate::template_scope::TemplateScopeVisitor for AnalyzeVisitor<'_> {
     }
 
     fn visit_element(&mut self, e: &svn_parser::Element) {
-        let ctx = WalkCtx {
-            source: self.source,
-        };
-        walk_attributes(
-            &e.attributes,
-            &mut self.summary,
-            &mut self.counters,
-            &ctx,
-            Some(e.name.as_str()),
-        );
-        collect_bind_this_checks(&e.attributes, &mut self.summary);
-        collect_bind_value_bindings(&e.attributes, e.name.as_str(), &mut self.summary);
-        collect_bubbled_dom_events(
-            &e.attributes,
-            BubbledDomEventScope::Element,
-            &mut self.summary,
-        );
-        // `<slot [name="X"] [attr=…]>`: capture for emit's `slots:`
-        // literal. Walks the attrs and skips any whose expression
-        // references a name in the active shadow stack.
-        if e.name.as_str() == "slot" {
-            collect_slot_def(&e.attributes, self.source, &self.shadow, &mut self.summary);
-        }
+        crate::nodes::element::visit(self, e);
     }
 
     fn visit_component(&mut self, c: &svn_parser::Component) {
-        let ctx = WalkCtx {
-            source: self.source,
-        };
-        // `use:` on a component is nonsensical at the Svelte level
-        // (actions attach to DOM elements, not to component instances),
-        // but we pass it along — emit's shim-side
-        // `__svn_map_element_tag(tag: string)` overload resolves
-        // unknown tags to `HTMLElement` so the pattern doesn't break
-        // the program.
-        walk_attributes(
-            &c.attributes,
-            &mut self.summary,
-            &mut self.counters,
-            &ctx,
-            None,
-        );
-        collect_component_instantiation(c, self.source, &mut self.summary);
-        // SlotHandler PLAN Stage 4: stash producer-side let-owner
-        // info so the next `enter_scope(LetDirective, …)` can
-        // resolve `let:foo` bindings to
-        // `__SvnComponentSlots<typeof Comp>['default']['foo']`.
-        // Skip when:
-        //   - `slot="X"` attr present (consumer-wrapper case —
-        //     the let-bindings then target the PARENT's slot,
-        //     not this component's; current resolver lacks
-        //     parent context, so leave unresolved).
-        //   - component name isn't a simple identifier (dotted
-        //     forms like `UI.Dropdown` would need a different
-        //     `typeof` shape; defer until a fixture proves it).
-        let has_slot_attr = literal_attr_value(&c.attributes, "slot").is_some();
-        if !has_slot_attr && is_simple_identifier(c.name.as_str()) {
-            self.pending_let_owner = Some(LetOwnerInfo {
-                component_root: c.name.clone(),
-                slot_name: SmolStr::new("default"),
-            });
-        }
+        crate::nodes::inline_component::visit(self, c);
     }
 
     fn visit_svelte_element(&mut self, s: &svn_parser::SvelteElement) {
-        use svn_parser::SvelteElementKind;
-        let ctx = WalkCtx {
-            source: self.source,
-        };
-        // `<svelte:element this={dynamic}>` — tag only known at
-        // runtime. Pass None so emit picks the generic HTMLElement
-        // overload; actions that require a narrower base will
-        // TS2345 against HTMLElement, matching user intent.
-        walk_attributes(
-            &s.attributes,
-            &mut self.summary,
-            &mut self.counters,
-            &ctx,
-            None,
-        );
-        // Reviewer item #1b: `<svelte:component this={X}>` and
-        // `<svelte:self>` carry props / events / bindings just like
-        // a regular `<Component>` instantiation. Route through the
-        // same machinery with a synthetic `component_root` that emit
-        // recognises:
-        //   - SelfRef        → `__svn_self_default`
-        //                       (resolves to the file's iso-component
-        //                       interface via `__svn_create_component_any`)
-        //   - Component      → `__svn_dyn_component[(<this expr>)]`
-        //                       (unparseable raw — emit pulls out the
-        //                       expression range and feeds it to
-        //                       `__svn_ensure_component(EXPR)`)
-        // Pre-fix these passed un-checked through a bare scope.
-        match s.kind {
-            SvelteElementKind::SelfRef => {
-                collect_instantiation_inner(
-                    SmolStr::from("__svn_self_default"),
-                    &s.attributes,
-                    &s.children,
-                    s.range.start,
-                    self.source,
-                    &mut self.summary,
-                );
-            }
-            SvelteElementKind::Component => {
-                // Extract `this={X}`. The X expression text becomes
-                // the `component_root` so emit's
-                // `__svn_ensure_component(<root>)` resolves the
-                // dynamic component value at the user's site. When
-                // `this` is missing the directive degenerates to
-                // `__svn_create_component_any`.
-                let this_expr = s.attributes.iter().find_map(|a| {
-                    let svn_parser::Attribute::Expression(e) = a else {
-                        return None;
-                    };
-                    if e.name.as_str() != "this" {
-                        return None;
-                    }
-                    self.source
-                        .get(e.expression_range.start as usize..e.expression_range.end as usize)
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(SmolStr::from)
-                });
-                let root = this_expr.unwrap_or_else(|| SmolStr::from("__svn_self_default"));
-                // Filter out the `this={…}` directive itself from
-                // the prop walk so it isn't surfaced as a regular
-                // prop on the synthetic component.
-                let attrs: Vec<svn_parser::Attribute> = s
-                    .attributes
-                    .iter()
-                    .filter(|a| {
-                        if let svn_parser::Attribute::Expression(e) = a {
-                            e.name.as_str() != "this"
-                        } else {
-                            true
-                        }
-                    })
-                    .cloned()
-                    .collect();
-                collect_instantiation_inner(
-                    root,
-                    &attrs,
-                    &s.children,
-                    s.range.start,
-                    self.source,
-                    &mut self.summary,
-                );
-            }
-            _ => {}
-        }
-        // `bind:this` types differently across the `<svelte:*>` family:
-        //
-        //   - `<svelte:element>`        → DOM HTMLElement target (current).
-        //   - `<svelte:component this>` → bound expr is a Component<…> ref.
-        //   - `<svelte:self bind:this>` → bound expr is an instance of THIS component.
-        //   - `<svelte:window/body/...>`→ no `bind:this` makes sense.
-        //   - `<svelte:boundary>`       → no `bind:this`.
-        //
-        // The DOM-element check (`__svn_bind_this_check<HTMLElement>`)
-        // wraps the bind expression with an HTMLElement-compatible
-        // target type. Emitting it for the component-instance kinds
-        // produces a wrong-shape diagnostic at the user's
-        // `bind:this={x}` site (component instance fails
-        // HTMLElement subtype check). Reviewer item #1a: gate the
-        // collection to ONLY the `Element` kind. `Component`,
-        // `SelfRef`, and `Boundary` `bind:this` get the proper
-        // component-instance check from the full instantiation port
-        // (#1b, deferred).
-        if matches!(s.kind, SvelteElementKind::Element) {
-            collect_bind_this_checks(&s.attributes, &mut self.summary);
-        }
-        // Bare `on:NAME` event-bubbling on `<svelte:body>` /
-        // `<svelte:window>` / `<svelte:element>`. Each emits to a
-        // different DOM event-map (`HTMLBodyElementEventMap` /
-        // `WindowEventMap` / `HTMLElementEventMap`) so the collector
-        // dispatches on the SvelteElementKind. Mirrors upstream
-        // svelte2tsx `event-handler.ts:63-72` which routes these
-        // through `__sveltets_2_mapBodyEvent` /
-        // `__sveltets_2_mapWindowEvent` / `__sveltets_2_mapElementEvent`.
-        // `<svelte:document>` is intentionally skipped — upstream's
-        // `event-handler.ts` doesn't handle it either.
-        //
-        // `<svelte:element>` reuses the regular-element scope
-        // (`HTMLElementEventMap`) — the dynamic-tag form picks an
-        // arbitrary HTML element at runtime, so the broadest DOM-event
-        // map matches what consumers see when bubbling. Closes c4
-        // false-positive on `<Button on:click={onSubmit}>` where Button
-        // forwards from `<svelte:element on:click>` and pre-fix the
-        // bubble was missed entirely (events fell through to
-        // `{[k:string]: CustomEvent<any>}` index sig, making
-        // `(e?: MouseEvent) => void` handlers fail TS2345 against the
-        // resolved `(e: CustomEvent<any>) => void` callback).
-        match s.kind {
-            SvelteElementKind::Body => collect_bubbled_dom_events(
-                &s.attributes,
-                BubbledDomEventScope::SvelteBody,
-                &mut self.summary,
-            ),
-            SvelteElementKind::Window => collect_bubbled_dom_events(
-                &s.attributes,
-                BubbledDomEventScope::SvelteWindow,
-                &mut self.summary,
-            ),
-            SvelteElementKind::Element => collect_bubbled_dom_events(
-                &s.attributes,
-                BubbledDomEventScope::Element,
-                &mut self.summary,
-            ),
-            _ => {}
-        }
+        crate::nodes::svelte_element::visit(self, s);
     }
 
-    fn visit_at_const(&mut self, bound_names: &[SmolStr], _expr_range: svn_core::Range) {
-        // Push every bound name onto the shadow so subsequent
-        // slot-attr / let-directive sites in the same fragment treat
-        // them as scope-local. Destructure `{@const}` forms
-        // (`{@const { a, b } = X}`) emit multiple names; bare
-        // `{@const NAME = X}` emits one. The walker's fragment-level
-        // bracket truncates them at exit.
-        //
-        // For the emit's `let NAME: any;` summary list, the legacy
-        // shape is one name per `{@const}` (bare-identifier form
-        // only). Destructure forms aren't currently surfaced in
-        // `at_const_names` because emit doesn't yet declare per-
-        // identifier `let` for them — that's tracked separately as
-        // a follow-up. Until then, only push the FIRST name to the
-        // summary list (matches pre-Phase-4 behaviour where
-        // destructure forms were skipped entirely from the list).
-        if let Some(first) = bound_names.first()
-            && !is_destructure(bound_names)
-            && self.counters.at_const_seen.insert(first.clone())
-        {
-            self.summary.at_const_names.push(first.clone());
-        }
-        for name in bound_names {
-            // `{@const NAME = expr}` introduces a template-scope
-            // binding without a value source we can rewrite (the
-            // initialiser walks in the parent scope, but the bound
-            // name itself is opaque to the slot resolver). Push as
-            // `None` — bound but unresolvable. Slot-attr collection
-            // drops references rather than splicing module-scope.
-            self.shadow.entries.push((name.clone(), None));
-        }
+    fn visit_at_const(&mut self, bound_names: &[SmolStr], expr_range: svn_core::Range) {
+        crate::nodes::const_tag::visit_at_const(self, bound_names, expr_range);
     }
 }
 

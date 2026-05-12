@@ -3,13 +3,45 @@
 
 use smol_str::SmolStr;
 use svn_core::Range;
-use svn_parser::{AttrValuePart, Attribute, Node};
+use svn_parser::{AttrValuePart, Attribute, Component, Node};
 
-use crate::nodes::destructure::simple_identifier_in;
+use crate::nodes::attribute::{WalkCtx, literal_attr_value, walk_attributes};
+use crate::nodes::destructure::{is_simple_identifier, simple_identifier_in};
 use crate::template_walker::{
-    BindDirective, BubbledComponentEvent, ComponentInstantiation, OnEventDirective, PropShape,
-    TemplateSummary,
+    AnalyzeVisitor, BindDirective, BubbledComponentEvent, ComponentInstantiation, LetOwnerInfo,
+    OnEventDirective, PropShape, TemplateSummary,
 };
+
+pub(crate) fn visit(v: &mut AnalyzeVisitor<'_>, c: &Component) {
+    let ctx = WalkCtx { source: v.source };
+    // `use:` on a component is nonsensical at the Svelte level
+    // (actions attach to DOM elements, not to component instances),
+    // but we pass it along — emit's shim-side
+    // `__svn_map_element_tag(tag: string)` overload resolves
+    // unknown tags to `HTMLElement` so the pattern doesn't break
+    // the program.
+    walk_attributes(&c.attributes, &mut v.summary, &mut v.counters, &ctx, None);
+    collect_component_instantiation(c, v.source, &mut v.summary);
+    // SlotHandler PLAN Stage 4: stash producer-side let-owner
+    // info so the next `enter_scope(LetDirective, …)` can
+    // resolve `let:foo` bindings to
+    // `__SvnComponentSlots<typeof Comp>['default']['foo']`.
+    // Skip when:
+    //   - `slot="X"` attr present (consumer-wrapper case —
+    //     the let-bindings then target the PARENT's slot,
+    //     not this component's; current resolver lacks
+    //     parent context, so leave unresolved).
+    //   - component name isn't a simple identifier (dotted
+    //     forms like `UI.Dropdown` would need a different
+    //     `typeof` shape; defer until a fixture proves it).
+    let has_slot_attr = literal_attr_value(&c.attributes, "slot").is_some();
+    if !has_slot_attr && is_simple_identifier(c.name.as_str()) {
+        v.pending_let_owner = Some(LetOwnerInfo {
+            component_root: c.name.clone(),
+            slot_name: SmolStr::new("default"),
+        });
+    }
+}
 
 /// Inspect a `<Component ...>` site and, if it's a shape we know how to
 /// generate a satisfies-check for, push a `ComponentInstantiation` to
