@@ -38,9 +38,6 @@ updates:
           - patch
           - minor
           - major
-    labels:
-      - dependencies
-      - rust
     commit-message:
       prefix: "chore(deps)"
       include: scope
@@ -75,9 +72,6 @@ updates:
           - patch
           - minor
           - major
-    labels:
-      - dependencies
-      - npm
     commit-message:
       prefix: "chore(deps)"
       include: scope
@@ -101,9 +95,6 @@ updates:
           - patch
           - minor
           - major
-    labels:
-      - dependencies
-      - github-actions
     commit-message:
       prefix: "chore(deps)"
       include: scope
