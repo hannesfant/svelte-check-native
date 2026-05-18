@@ -438,3 +438,49 @@ fn runes_inference_ignores_double_dollar_props_substring() {
         "$$props must not promote the file to runes mode, got: {codes:?}"
     );
 }
+
+/// `<svelte:element this={…dynamic…} onclick>` must fire
+/// `a11y_no_static_element_interactions`. Upstream's check_element
+/// does NOT gate this rule on `is_dynamic_element`, so dynamic
+/// elements with an interactive handler and no resolvable role
+/// still warn. Our pre-fix guard skipped the rule entirely whenever
+/// `this` wasn't a string literal.
+#[test]
+fn svelte_element_dynamic_this_with_onclick_fires_no_static_element_interactions() {
+    let src = "\
+<script>
+  let onclick = () => {}
+  let isAnchor = false
+</script>
+
+<svelte:element this={isAnchor ? 'a' : 'div'} {onclick}>x</svelte:element>
+";
+    let warnings = lint(src, CompatFeatures::MODERN);
+    let cs = codes(&warnings);
+    assert!(
+        cs.contains(&"a11y_no_static_element_interactions"),
+        "dynamic <svelte:element> with onclick must fire a11y_no_static_element_interactions, got: {cs:?}"
+    );
+}
+
+/// Same shape with a `svelte-ignore` comment above must NOT fire —
+/// the suppression path goes through the same emit channel, so
+/// removing the dynamic gate must not bypass it.
+#[test]
+fn svelte_element_dynamic_this_with_onclick_respects_svelte_ignore() {
+    let src = "\
+<script>
+  let onclick = () => {}
+  let isAnchor = false
+</script>
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<svelte:element this={isAnchor ? 'a' : 'div'} {onclick}>x</svelte:element>
+";
+    let warnings = lint(src, CompatFeatures::MODERN);
+    let cs = codes(&warnings);
+    assert!(
+        !cs.contains(&"a11y_no_static_element_interactions"),
+        "svelte-ignore must suppress the warning, got: {cs:?}"
+    );
+}

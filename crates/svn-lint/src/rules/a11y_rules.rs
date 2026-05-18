@@ -50,12 +50,13 @@ pub fn visit_regular(el: &Element, ctx: &mut LintContext<'_>, ancestors: &[Strin
 
 /// Entry for a `<svelte:element>` dynamic element.
 pub fn visit_dynamic(se: &SvelteElement, ctx: &mut LintContext<'_>, ancestors: &[String]) {
-    // Only run a11y checks if `this={"literal"}` resolves to a
-    // known element name. Upstream: dynamic-element checks are
-    // mostly silenced (most rules bail on is_dynamic_element).
-    let name = static_element_name_from_this(se).unwrap_or("");
+    // Upstream passes `node.name` (literally `"svelte:element"`) into
+    // check_element regardless of what `this` resolves to. Most rules
+    // bail on `is_dynamic`, but `a11y_no_static_element_interactions`
+    // fires on dynamic elements too — and its message interpolates
+    // the element name, which upstream renders as `<svelte:element>`.
     check_element(
-        name,
+        "svelte:element",
         &se.attributes,
         se.range,
         true, /* dynamic */
@@ -63,22 +64,6 @@ pub fn visit_dynamic(se: &SvelteElement, ctx: &mut LintContext<'_>, ancestors: &
         ctx,
         ancestors,
     );
-}
-
-/// Resolve `<svelte:element this="div">` (literal string) → "div".
-/// Returns None for expression-valued `this`.
-fn static_element_name_from_this(se: &SvelteElement) -> Option<&str> {
-    for a in &se.attributes {
-        if let Attribute::Plain(p) = a
-            && p.name.as_str() == "this"
-            && let Some(v) = &p.value
-            && v.parts.len() == 1
-            && let AttrValuePart::Text { content, .. } = &v.parts[0]
-        {
-            return Some(content.as_str());
-        }
-    }
-    None
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -581,9 +566,11 @@ fn check_element(
 
     // a11y_no_static_element_interactions: static element (not
     // interactive, not non-interactive, no role or static role)
-    // with any interactive handler.
-    if !is_dynamic
-        && !has_spread
+    // with any interactive handler. Fires on dynamic elements too —
+    // upstream's check_element doesn't gate this rule on
+    // is_dynamic_element, and `<svelte:element>` with an `onclick`
+    // is the canonical case we need to catch.
+    if !has_spread
         && (role_attr.is_none() || role_static_value.is_some())
         && !is_hidden_from_screen_reader(name, &attribute_map)
         && !resolved_role.is_some_and(is_presentation_role)
